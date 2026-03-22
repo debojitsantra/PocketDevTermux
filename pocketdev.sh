@@ -518,38 +518,202 @@ install_datascience() {
   section "Data Science / ML"
   install_python
 
-  local pkgs=(
-    "numpy"
-    "pandas"
-    "matplotlib"
-    "seaborn"
-    "scikit-learn sklearn"
-    "jupyter"
-    "notebook"
-    "ipykernel"
-    "scipy"
-  )
+  #tur-repo provides prebuilt wheels for numpy/scipy/pandas/matplotlib on Termux
+  #without it most scientific packages fail to build from source
+  step "tur-repo (prebuilt scientific packages)"
+  if pkg_exists "tur-repo"; then
+    skip
+  else
+    if DEBIAN_FRONTEND=noninteractive pkg install -y tur-repo >> "$LOG_FILE" 2>&1; then
+      ok
+      state_set "pkg:tur-repo"
+      #update after adding repo
+      pkg update -y >> "$LOG_FILE" 2>&1 || true
+    else
+      fail "tur-repo install failed -- scientific packages may not build correctly"
+    fi
+  fi
 
-  for entry in "${pkgs[@]}"; do
-    local pname iname
-    read -r pname iname <<< "$entry"
-    iname="${iname:-$pname}"
-    pip_install "$pname" "$iname"
+  #build tools required for packages that still compile from source
+  for pkg in build-essential clang make cmake pkg-config binutils patchelf libzmq; do
+    pkg_install "$pkg"
   done
+
+  #install from pkg where prebuilt wheels exist via tur-repo
+  #these avoid the painful from-source build path entirely
+  for pkg in python-numpy matplotlib python-scipy python-pandas; do
+    step "pkg install $pkg"
+    if pkg_exists "$pkg"; then
+      skip
+    elif DEBIAN_FRONTEND=noninteractive pkg install -y "$pkg" >> "$LOG_FILE" 2>&1; then
+      ok
+      state_set "pkg:$pkg"
+    else
+      fail "pkg install $pkg failed -- check $LOG_FILE"
+    fi
+  done
+
+  #detect python version for paths that need i
+  local pyver
+  pyver=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "3.12")
+
+  #fix openmp flag that causes build failures on Termux
+  step "OpenMP sysconfigdata fix"
+  local sysconfig_file
+  sysconfig_file=$(find "$PREFIX/lib/python${pyver}" -name "*sysconfigdata*.py" 2>/dev/null | head -1)
+  if [[ -n "$sysconfig_file" ]]; then
+    rm -rf "$PREFIX/lib/python${pyver}/__pycache__" 2>/dev/null || true
+    sed -i 's|-fno-openmp-implicit-rpath||g' "$sysconfig_file" 2>/dev/null && ok || warn "sysconfigdata patch failed"
+  else
+    skip
+  fi
+
+  #pyzmq needed for jupyter -- must be installed before jupyter
+  step "pip: pyzmq"
+  if python3 -c "import zmq" &>/dev/null 2>&1; then
+    skip
+  elif pip install --quiet --break-system-packages pyzmq >> "$LOG_FILE" 2>&1; then
+    ok
+    #patch zmq .so to link libpython explicitly 
+    local zmq_so
+    zmq_so=$(find "$PREFIX/lib/python${pyver}" -name "_zmq.cpython-*.so" 2>/dev/null | head -1)
+    if [[ -n "$zmq_so" ]] && has_cmd patchelf; then
+      patchelf --add-needed "libpython${pyver}.so" "$zmq_so" >> "$LOG_FILE" 2>&1 || true
+    fi
+    state_set "pip:pyzmq"
+  else
+    fail "pyzmq install failed"
+  fi
+
+  #jupyter and notebook
+  for pkg in jupyter jupyterlab ipykernel; do
+    pip_install "$pkg"
+  done
+
+  
+  step "pip: pandas (with LDFLAGS)"
+  if python3 -c "import pandas" &>/dev/null 2>&1; then
+    skip
+  else
+    if LDFLAGS="-lpython${pyver}" pip install --quiet --break-system-packages \
+         --no-build-isolation --no-cache-dir pandas >> "$LOG_FILE" 2>&1; then
+      ok
+      state_set "pip:pandas"
+    else
+      fail "pandas install failed -- check $LOG_FILE"
+    fi
+  fi
+
+  
+  step "pip: scikit-learn"
+  if python3 -c "import sklearn" &>/dev/null 2>&1; then
+    skip
+  else
+    if pip install --quiet --break-system-packages --no-build-isolation \
+         scikit-learn >> "$LOG_FILE" 2>&1; then
+      ok
+      state_set "pip:scikit-learn"
+    else
+      fail "scikit-learn install failed -- check $LOG_FILE"
+    fi
+  fi
+
+  
+  for pkg in seaborn openpyxl; do
+    pip_install "$pkg"
+  done
+
+  #opencv via pkg 
+  if confirm "  Install OpenCV (computer vision)?"; then
+    pkg_install "x11-repo"
+    step "pkg update after x11-repo"
+    pkg update -y >> "$LOG_FILE" 2>&1 && ok || fail "pkg update failed"
+    pkg_install "termux-x11-nightly"
+    pkg_install "opencv-python"
+    state_set "pkg:x11-repo"
+    state_set "pkg:termux-x11-nightly"
+    state_set "pkg:opencv-python"
+  fi
+
+  #termux-x11 for gui apps 
+  #only install if not already done via opencv block above
+  if ! pkg_exists "termux-x11-nightly"; then
+    if confirm "  Install termux-x11 for GUI/visual output (matplotlib interactive, etc.)?"; then
+      pkg_install "x11-repo"
+      step "pkg update after x11-repo"
+      pkg update -y >> "$LOG_FILE" 2>&1 && ok || fail "pkg update failed"
+      pkg_install "termux-x11-nightly"
+      state_set "pkg:x11-repo"
+      state_set "pkg:termux-x11-nightly"
+
+      #set DISPLAY so gui apps know where to render
+      grep -q 'DISPLAY=:0' "$HOME/.bashrc" || cat >> "$HOME/.bashrc" << 'X11ENV'
+
+#PocketDev: termux-x11 display
+export DISPLAY=:0
+X11ENV
+      step "DISPLAY=:0 env var"; ok
+
+      #write a launch helper for termux-x11
+      cat > "$HOME/start-x11.sh" << 'X11LAUNCH'
+#!/data/data/com.termux/files/usr/bin/bash
+#start termux-x11 session
+#open the Termux:X11 app on your phone first, then run this
+export DISPLAY=:0
+termux-x11 :0 &
+sleep 1
+echo "X11 session started. DISPLAY=:0"
+echo "You can now run GUI apps: python plot.py, jupyter lab, etc."
+X11LAUNCH
+      chmod +x "$HOME/start-x11.sh"
+      grep -q 'alias x11=' "$HOME/.bashrc" || \
+        echo "alias x11='bash ~/start-x11.sh'" >> "$HOME/.bashrc"
+      step "x11 launch script + alias"; ok
+
+      info "Install the Termux:X11 companion app to see the display:"
+      info "https://github.com/termux/termux-x11/releases"
+    fi
+  fi
+
+  #statsmodels is complex -- build from source with correct flags
+  if confirm "  Install statsmodels? (builds from source, takes several minutes)"; then
+    step "statsmodels (from source)"
+    local api_level
+    api_level=$(getprop ro.build.version.sdk 2>/dev/null || echo "34")
+    if CFLAGS="-U__ANDROID_API__ -D__ANDROID_API__=${api_level}" \
+       MATHLIB=m \
+       LDFLAGS="-lpython${pyver}" \
+       pip install --quiet --break-system-packages --no-build-isolation \
+         statsmodels >> "$LOG_FILE" 2>&1; then
+      ok
+      state_set "pip:statsmodels"
+    else
+      fail "statsmodels build failed -- check $LOG_FILE"
+    fi
+  fi
+
+  #clean pip cache to free space
+  step "pip cache purge"
+  pip cache purge >> "$LOG_FILE" 2>&1 && ok || skip
 
   if [[ ! -d "$PROJECTS_DIR/datascience-starter" ]]; then
     mkdir -p "$PROJECTS_DIR/datascience-starter"
     cat > "$PROJECTS_DIR/datascience-starter/explore.py" << 'EOF'
 """
-Data Science Starter — run: python explore.py
+Data Science Starter
+Run: python explore.py
 """
 import numpy as np
 import pandas as pd
 import matplotlib
-matplotlib.use('Agg')  # headless for Termux
+#use TkAgg if termux-x11 is running (DISPLAY set), else save to file
+import os
+if os.environ.get("DISPLAY"):
+    matplotlib.use('TkAgg')
+else:
+    matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-# Sample data
 rng = np.random.default_rng(42)
 data = pd.DataFrame({
     "x": np.arange(20),
@@ -561,7 +725,6 @@ print(data.describe())
 print("\nGrouped means:")
 print(data.groupby("category")["y"].mean())
 
-# Save a simple plot
 fig, ax = plt.subplots()
 ax.plot(data["x"], data["y"], marker="o")
 ax.set_title("Sample Plot")
@@ -680,7 +843,7 @@ EOF
   fi
 }
 
-# ── Profile: Polyglot ────────────────────────────────────────
+
 #profile: polyglot - runs all profiles
 install_polyglot() {
   install_python
@@ -692,7 +855,7 @@ install_polyglot() {
   install_go
 }
 
-# ── Editor setup ─────────────────────────────────────────────
+
 #editor selection
 setup_editor() {
   section "Code Editor"
@@ -748,8 +911,8 @@ EOF
   esac
 }
 
-# ── Extras ───────────────────────────────────────────────────
-#optional extras
+
+#extras
 setup_extras() {
   section "Optional Extras"
   echo ""
@@ -798,7 +961,6 @@ QOLALIASES
   touch "$HOME/.hushlogin" 2>/dev/null || true
 }
 
-# ── Version check table ──────────────────────────────────────
 #version check table
 print_version_table() {
   section "Installed Versions"
@@ -832,7 +994,7 @@ print_version_table() {
   echo ""
 }
 
-# ── Optional: VS Code Server ─────────────────────────────────
+
 #optional: vscode server
 setup_vscode_server() {
   section "VS Code Server (code-server)"
@@ -884,7 +1046,7 @@ VSLAUNCH
   info "Open http://localhost:8080 in your browser."
 }
 
-# ── Optional: AI Coding Assistant ────────────────────────────
+
 #optional: ai coding assistant
 setup_ai_assistant() {
   section "AI Coding Assistant"
@@ -953,7 +1115,7 @@ setup_ai_assistant() {
   printf "  ${DIM}sgpt 'write a bash function to backup files'${R}\n"
 }
 
-# ── Optional: Local LLM for Coding ───────────────────────────
+
 #optional: local llm via ollama
 setup_local_llm() {
   section "Local LLM for Coding"
@@ -1038,7 +1200,7 @@ OLLAUNCH
   info "Alias: llm"
 }
 
-# ── Optional: Full Linux Dev Container ───────────────────────
+
 #optional: full linux container via proot-distro
 setup_linux_container() {
   section "Full Linux Dev Container (proot-distro)"
@@ -1084,7 +1246,7 @@ setup_linux_container() {
     fi
   fi
 
-  # Write a nice login script
+  
   local login_script="$HOME/linux.sh"
   cat > "$login_script" << LOGINSCRIPT
 #!/data/data/com.termux/files/usr/bin/bash
@@ -1132,7 +1294,7 @@ LOGINSCRIPT
   fi
 }
 
-# ── Optional: Project Templates ──────────────────────────────
+
 #optional: project scaffolding command
 setup_project_templates() {
   section "Automatic Project Templates"
@@ -1606,7 +1768,7 @@ jupyter notebook
 EOF
 }
 
-# ── Main interactive flow ──────────────────────────────────
+
 
 template="${1:-}"
 proj_name="${2:-}"
@@ -1682,7 +1844,7 @@ NEWPROJECT
   printf "  ${DIM}Run 'newproject' with no args to see all templates.${R}\n"
 }
 
-# ── Resources: Apps & Learning ───────────────────────────────
+
 #resources: apps and learning links
 show_resources() {
   clear
@@ -1690,7 +1852,7 @@ show_resources() {
   printf "${WHITE}${BOLD}  >>  Recommended Apps & Learning Resources${R}\n"
   hr '='
 
-  # ── Text Editors (Android) ───────────────────────────────
+  
   section "Code Editor Apps for Android"
 
   printf "  ${CYAN}${BOLD}Acode${R}  ${DIM}-- powerful code editor, syntax highlight, git, FTP${R}\n"
@@ -1710,7 +1872,7 @@ show_resources() {
 
   press_enter
 
-  # ── Learning Apps ────────────────────────────────────────
+  
   section "Learn to Code -- Free Apps"
 
   printf "  ${CYAN}${BOLD}SoloLearn${R}  ${DIM}-- free courses: Python, JS, C++, Java, SQL, HTML & more${R}\n"
@@ -1734,7 +1896,7 @@ show_resources() {
 
   press_enter
 
-  # ── Free Web Courses ─────────────────────────────────────
+  
   section "Free Courses Online"
 
   printf "  ${CYAN}${BOLD}freeCodeCamp${R}  ${DIM}-- full web dev curriculum, 100%% free, certificates${R}\n"
@@ -1768,7 +1930,7 @@ show_resources() {
 
   press_enter
 
-  # ── Practice & Challenges ────────────────────────────────
+  
   section "Practice & Coding Challenges"
 
   printf "  ${CYAN}${BOLD}LeetCode${R}       ${DIM}https://leetcode.com${R}          ${DIM}-- interview prep, algorithms${R}\n"
@@ -1781,7 +1943,7 @@ show_resources() {
   press_enter
 }
 
-# ── Summary ──────────────────────────────────────────────────
+
 #final summary
 print_summary() {
   echo ""
@@ -1807,7 +1969,7 @@ print_summary() {
   hr '='
 }
 
-# ── Main ─────────────────────────────────────────────────────
+
 main() {
   # Init log
   {
@@ -1818,7 +1980,7 @@ main() {
 
   banner
 
-  # Welcome message — no name needed, just dive in
+  
   printf "  ${GREEN}${BOLD}PocketDevTermux${R}\n\n"
   printf "  ${DIM}Pick profiles, re-run anytime. Already-installed tools are skipped.${R}\n"
   printf "  ${DIM}Log: ~/pocketdev.log${R}\n"
@@ -1870,7 +2032,7 @@ main() {
   setup_extras
   press_enter
 
-  # ── Power features (all optional) ───────────────────────
+  
   section "Power Features"
   echo ""
   printf "  ${DIM}All optional.${R}\n"
