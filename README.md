@@ -7,7 +7,8 @@
 ![No Root](https://img.shields.io/badge/Root-Not%20Required-brightgreen.svg)
 ![Maintained](https://img.shields.io/badge/Maintained-Yes-success.svg)
 
-A fully interactive, TUI-based coding environment installer for [Termux](https://termux.dev). Pick your developer profile, install languages and tools, set up an editor, and optionally spin up VS Code Server, a local AI coding model, or a proot based full Linux container.
+PocketDevTermux turns Termux into a complete mobile development workstation.
+Install programming languages, tools, editors, VS Code Server, AI coding assistants, and a full Linux container all from one interactive installer.
 
 ---
 
