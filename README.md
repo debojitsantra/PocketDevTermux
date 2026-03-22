@@ -23,19 +23,9 @@ A fully interactive, TUI-based coding environment installer for [Termux](https:/
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/debojitsantra/PocketDevTermux/refs/heads/main/pocketdev.sh -o pocketdev.sh
-chmod +x pocketdev.sh
-bash pocketdev.sh
+bash <(curl -sSL https://raw.githubusercontent.com/debojitsantra/PocketDevTermux/main/pocketdev.sh)
 ```
 
-Or clone the repo:
-
-```bash
-pkg install git
-git clone https://github.com/debojitsantra/PocketDevTermux.git
-cd PocketDevTermux
-bash pocketdev.sh
-```
 
 ---
 
@@ -160,8 +150,7 @@ The installer tracks every installed package in `~/.pocketdev_state`. Re-running
 removes exactly what was installed.
 
 ```bash
-curl -fsSL https://github.com/debojitsantra/PocketDevTermux/blob/main/uninstall.sh -o uninstall.sh
-bash uninstall.sh
+bash <(curl -sSL https://raw.githubusercontent.com/debojitsantra/PocketDevTermux/main/uninstall.sh)
 ```
 
 The uninstaller:
