@@ -7,7 +7,7 @@
 ![No Root](https://img.shields.io/badge/Root-Not%20Required-brightgreen.svg)
 ![Maintained](https://img.shields.io/badge/Maintained-Yes-success.svg)
 
-PocketDevTermux turns Termux into a complete mobile development workstation.
+PocketDevTermux turns [Termux](https://termux.dev)  into a complete mobile development workstation.
 Install programming languages, tools, editors, VS Code Server, AI coding assistants, and a full Linux container all from one interactive installer.
 
 ---
@@ -16,8 +16,6 @@ Install programming languages, tools, editors, VS Code Server, AI coding assista
 
 - Android 7.0 or higher
 - [Termux](https://f-droid.org/packages/com.termux/) installed from F-Droid (recommended) or Play Store
-- Internet connection during setup
-- ~500MB free storage minimum (more for Linux containers and LLM models)
 
 ---
 
