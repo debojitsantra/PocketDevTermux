@@ -2,14 +2,12 @@
 
 set -uo pipefail
 
-#Constants
 VERSION="2.2"
 LOG_FILE="$HOME/devsetup.log"
 STATE_FILE="$HOME/.devsetup_state"
 PROJECTS_DIR="$HOME/projects"
 TERM_WIDTH=$(tput cols 2>/dev/null || echo 72)
 
-#Colours
 R='\033[0m'
 BOLD='\033[1m'
 DIM='\033[2m'
@@ -22,15 +20,12 @@ CYAN='\033[0;36m'
 WHITE='\033[1;37m'
 ORANGE='\033[0;33m'
 
-#logs
 log()  { printf "[%s] %s\n" "$(date '+%H:%M:%S')" "$*" >> "$LOG_FILE"; }
 logn() { printf "[%s] %s" "$(date '+%H:%M:%S')" "$*" >> "$LOG_FILE"; }
 
-#state
 state_set() { grep -qxF "$1" "$STATE_FILE" 2>/dev/null || echo "$1" >> "$STATE_FILE"; }
 state_has() { grep -qxF "$1" "$STATE_FILE" 2>/dev/null; }
 
-#ui helperr
 hr() {
   local char="${1:--}" color="${2:-$CYAN}"
   printf "${color}${BOLD}"
@@ -42,7 +37,7 @@ banner() {
   clear
   hr '='
   printf "${WHITE}${BOLD}"
-  printf "  >>  PocketDev v%s " "$VERSION"
+  printf "  >>  DevSetup v%s  --  Universal Coding Environment\n" "$VERSION"
   printf "      Termux Edition  |  Built for beginners  |  %s\n" "$(date '+%d %B %Y')"
   printf "${R}"
   hr '='
@@ -58,7 +53,6 @@ section() {
 }
 
 step() {
-  
   printf "  ${CYAN}-->${R}  %-50s" "$1"
 }
 
@@ -74,7 +68,6 @@ info()    { printf "  ${BLUE}(i)${R}  %s\n" "$1"; }
 success() { printf "  ${GREEN}${BOLD}(+)${R}  %s\n" "$1"; }
 
 ask() {
-  
   local _var="$1" _prompt="$2" _default="${3:-}"
   local _hint=""
   [[ -n "$_default" ]] && _hint=" ${DIM}[${_default}]${R}"
@@ -112,17 +105,13 @@ spinner() {
   printf "\r  ${CYAN}-->${R}  %-50s" "$msg"
 }
 
-#packagewrappers
-
-#check if command exists
 has_cmd() { command -v "$1" &>/dev/null; }
 
-#check if installed
 pkg_exists() { dpkg -l "$1" &>/dev/null 2>&1; }
 
 pkg_install() {
   local pkg="$1"
-  local skip_check="${2:-}"  # pass forcr
+  local skip_check="${2:-}"  # pass "force" to skip existence check
 
   if [[ "$skip_check" != "force" ]] && pkg_exists "$pkg"; then
     step "pkg: $pkg (already installed)"; skip
@@ -140,7 +129,6 @@ pkg_install() {
 
 pip_install() {
   local pkg="$1"
-  
   local import_name="${2:-$pkg}"
 
   step "pip: $pkg"
@@ -186,8 +174,6 @@ cargo_install() {
   fi
 }
 
-#profile definations
-
 show_profiles() {
   banner
   section "Pick Your Developer Profile"
@@ -205,10 +191,10 @@ show_profiles() {
   printf "       ${DIM}Clang, GCC, Make, CMake, GDB, valgrind, binutils${R}\n\n"
 
   printf "  ${CYAN}${BOLD}[ 4]${R}  ${WHITE}Java Developer${R}\n"
-  printf "       ${DIM}OpenJDK 21, Gradle, Maven${R}\n\n"
+  printf "       ${DIM}OpenJDK 17, Gradle, Maven${R}\n\n"
 
   printf "  ${CYAN}${BOLD}[ 5]${R}  ${WHITE}Kotlin Developer${R}\n"
-  printf "       ${DIM}OpenJDK 21, Kotlin compiler${R}\n\n"
+  printf "       ${DIM}OpenJDK 17, Kotlin compiler${R}\n\n"
 
   printf "  ${CYAN}${BOLD}[ 6]${R}  ${WHITE}Rust Developer${R}\n"
   printf "       ${DIM}rustup, rustc, cargo, rust-analyzer${R}\n\n"
@@ -228,7 +214,6 @@ show_profiles() {
   hr '-' "$DIM"
 }
 
-# ── Base tools ───────────────────────────────────────────────
 install_base() {
   section "Base Tools"
   printf "  ${DIM}Installing essentials that every developer needs...${R}\n\n"
@@ -236,7 +221,6 @@ install_base() {
     pkg_install "$pkg"
   done
 
-  # Git global config
   local gname gemail
   gname=$(git config --global user.name 2>/dev/null || true)
   if [[ -z "$gname" ]]; then
@@ -256,13 +240,11 @@ install_base() {
   fi
 }
 
-
 install_python() {
   section "Python Developer"
   pkg_install python
   pkg_install python-pip
 
-  
   pip_install "ipython"
   pip_install "black"
   pip_install "pylint"
@@ -271,7 +253,6 @@ install_python() {
   pip_install "httpx"
   pip_install "virtualenv"
   pip_install "python-dotenv" "dotenv"
-
 
   local bashrc="$HOME/.bashrc"
   grep -q 'mkenv' "$bashrc" 2>/dev/null || cat >> "$bashrc" << 'ALIASES'
@@ -284,7 +265,6 @@ alias pip='pip --break-system-packages'
 ALIASES
   step "Python shell aliases"; ok
 
-  
   if [[ ! -d "$PROJECTS_DIR/python-starter" ]]; then
     mkdir -p "$PROJECTS_DIR/python-starter"
     cat > "$PROJECTS_DIR/python-starter/main.py" << 'EOF'
@@ -322,11 +302,9 @@ EOF
   fi
 }
 
-
 install_web() {
   section "Web Developer"
   pkg_install nodejs
-  
 
   npm_global "live-server"
   npm_global "prettier"
@@ -336,7 +314,6 @@ install_web() {
   npm_global "typescript" "tsc"
   npm_global "ts-node"
 
-  
   if [[ ! -d "$PROJECTS_DIR/web-starter" ]]; then
     mkdir -p "$PROJECTS_DIR/web-starter"
     cat > "$PROJECTS_DIR/web-starter/index.html" << 'EOF'
@@ -390,10 +367,8 @@ install_c_cpp() {
     pkg_install "$pkg"
   done
 
-  
   pkg_install "gdb" || warn "gdb unavailable on this device"
 
-  
   if [[ ! -d "$PROJECTS_DIR/c-starter" ]]; then
     mkdir -p "$PROJECTS_DIR/c-starter"
     cat > "$PROJECTS_DIR/c-starter/main.c" << 'EOF'
@@ -439,10 +414,8 @@ EOF
   fi
 }
 
-
 install_java() {
   section "Java Developer"
-  pkg_install "openjdk-21"
   pkg_install "openjdk-17"
   pkg_install "gradle"
   pkg_install "maven" || warn "maven unavailable, use gradle"
@@ -471,11 +444,9 @@ EOF
   fi
 }
 
-
 install_kotlin() {
   section "Kotlin Developer"
   pkg_install "openjdk-17"
-  pkg_install "openjdk-21"
   pkg_install "kotlin"
 
   if [[ ! -d "$PROJECTS_DIR/kotlin-starter" ]]; then
@@ -510,9 +481,7 @@ install_rust() {
     if curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --no-modify-path >> "$LOG_FILE" 2>&1; then
       ok
-      # Add cargo to PATH for current session
       export PATH="$HOME/.cargo/bin:$PATH"
-      # Add to .bashrc if not there
       grep -q '.cargo/bin' "$HOME/.bashrc" || \
         echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$HOME/.bashrc"
       state_set "pkg:rustc"
@@ -532,7 +501,6 @@ install_rust() {
   fi
 }
 
-
 install_datascience() {
   section "Data Science / ML"
   install_python
@@ -550,7 +518,6 @@ install_datascience() {
   )
 
   for entry in "${pkgs[@]}"; do
-    #Split "pkg importname" or just "pkg"
     local pname iname
     read -r pname iname <<< "$entry"
     iname="${iname:-$pname}"
@@ -709,7 +676,7 @@ install_polyglot() {
   install_go
 }
 
-#editor
+
 setup_editor() {
   section "Code Editor"
   echo ""
@@ -742,7 +709,7 @@ setup_editor() {
     4)
       pkg_install "vim"
       grep -q 'EDITOR=vim' "$bashrc" || echo 'export EDITOR=vim' >> "$bashrc"
-      
+      # Minimal .vimrc
       [[ -f "$HOME/.vimrc" ]] || cat > "$HOME/.vimrc" << 'EOF'
 syntax on
 set number
@@ -766,7 +733,7 @@ EOF
   esac
 }
 
-#extrass
+
 setup_extras() {
   section "Optional Extras"
   echo ""
@@ -797,7 +764,7 @@ EOF
     pkg_install "bottom"
   fi
 
-  #Shell polish
+  # Shell polish
   local bashrc="$HOME/.bashrc"
   grep -q '# DevSetup: QoL aliases' "$bashrc" || cat >> "$bashrc" << 'QOLALIASES'
 
@@ -813,11 +780,10 @@ alias myip='curl -s ifconfig.me && echo'
 QOLALIASES
   step "QoL shell aliases"; ok
 
-  # suppress Termux motd
+  # hushlogin to suppress Termux motd
   touch "$HOME/.hushlogin" 2>/dev/null || true
 }
 
-#check versions
 print_version_table() {
   section "Installed Versions"
   echo ""
@@ -850,7 +816,7 @@ print_version_table() {
   echo ""
 }
 
-
+# ── Optional: VS Code Server ────────────────────────────────
 setup_vscode_server() {
   section "VS Code Server (code-server)"
   echo ""
@@ -893,7 +859,7 @@ VSLAUNCH
   chmod +x "$HOME/start-vscode.sh"
   step "Launch script: ~/start-vscode.sh"; ok
 
- 
+
   grep -q 'alias vscode=' "$HOME/.bashrc" || \
     echo "alias vscode='bash ~/start-vscode.sh'" >> "$HOME/.bashrc"
   step "Shell alias: vscode"; ok
@@ -975,7 +941,7 @@ setup_ai_assistant() {
   printf "  ${DIM}sgpt 'write a bash function to backup files'${R}\n"
 }
 
-
+# ── Optional: Local LLM for Coding ───────────────────────────
 setup_local_llm() {
   section "Local LLM for Coding"
   echo ""
@@ -989,7 +955,7 @@ setup_local_llm() {
     step "local LLM"; skip; return
   fi
 
- 
+  # Install Ollama
   step "Ollama"
   if has_cmd ollama; then
     skip
@@ -1003,7 +969,7 @@ setup_local_llm() {
     fi
   fi
 
-  
+  # Pick model
   echo ""
   printf "  Which coding model do you want to pull?\n\n"
   printf "  ${CYAN}[1]${R}  qwen2.5-coder:1.5b  ${DIM}-- ~1GB, fast, good for most tasks${R}\n"
@@ -1035,7 +1001,7 @@ setup_local_llm() {
     fi
   fi
 
-  
+  # Write a launch helper
   cat > "$HOME/start-ollama.sh" << 'OLLAUNCH'
 #!/data/data/com.termux/files/usr/bin/bash
 # Start Ollama and open an interactive coding chat
@@ -1062,7 +1028,6 @@ OLLAUNCH
   info "Or just type:  llm"
 }
 
-
 setup_linux_container() {
   section "Full Linux Dev Container (proot-distro)"
   echo ""
@@ -1086,21 +1051,21 @@ setup_linux_container() {
     5|*) step "Linux container"; skip; return ;;
   esac
 
-  
+  # Install proot-distro
   step "proot-distro"
   if pkg_exists "proot-distro"; then skip
   else
     pkg_install "proot-distro"
   fi
 
-  
+  # Install chosen distro
   printf "\n  ${DIM}Installing %s -- downloading rootfs, may take a few minutes...${R}\n\n" "$distro_name"
   step "proot-distro install $distro_slug"
   if proot-distro install "$distro_slug" >> "$LOG_FILE" 2>&1; then
     ok
     state_set "proot:$distro_slug"
   else
-   
+    # Already installed is also fine
     if proot-distro list 2>/dev/null | grep -q "$distro_slug"; then
       skip
     else
@@ -1109,7 +1074,7 @@ setup_linux_container() {
     fi
   fi
 
-  
+
   local login_script="$HOME/linux.sh"
   cat > "$login_script" << LOGINSCRIPT
 #!/data/data/com.termux/files/usr/bin/bash
@@ -1131,7 +1096,7 @@ LOGINSCRIPT
   printf "  ${DIM}Inside it, run: apt update && apt install -y build-essential${R}\n"
   printf "  ${DIM}Your Termux home is shared at /root or /home/user${R}\n"
 
- 
+
   echo ""
   if confirm "  Auto-install build tools inside $distro_name right now?"; then
     echo ""
@@ -1156,7 +1121,6 @@ LOGINSCRIPT
     step "Container dev tools bootstrap"; ok
   fi
 }
-
 
 setup_project_templates() {
   section "Automatic Project Templates"
@@ -1735,7 +1699,7 @@ show_resources() {
 
   press_enter
 
-  
+
   section "Learn to Code -- Free Apps"
   printf "  ${DIM}Great for structured learning alongside hands-on practice${R}\n\n"
 
@@ -1837,19 +1801,19 @@ print_summary() {
   hr '='
 }
 
-#main
+# ── Main ─────────────────────────────────────────────────────
 main() {
   # Init log
   {
     echo "========================================"
-    echo " devsetup.sh v${VERSION} started at $(date)"
+    echo " pocketdev.sh v${VERSION} started at $(date)"
     echo "========================================"
   } >> "$LOG_FILE"
 
   banner
 
-  
-  printf "  ${GREEN}${BOLD}Welcome to PocketDev!${R}\n\n"
+  # Welcome message — no name needed, just dive in
+  printf "  ${GREEN}${BOLD}Welcome to DevSetup!${R}\n\n"
   printf "  This script will set up a complete coding environment\n"
   printf "  ${DIM}* You'll pick your developer profile(s) in a moment.${R}\n"
   printf "  ${DIM}* Already-installed tools are automatically skipped.${R}\n"
@@ -1867,7 +1831,7 @@ main() {
   if pkg upgrade -y >> "$LOG_FILE" 2>&1; then ok; else fail "pkg upgrade failed"; fi
   press_enter
 
-  
+  # Base
   install_base
   press_enter
 
@@ -1930,7 +1894,7 @@ main() {
   show_resources
   print_summary
 
-  log "PocketDev finished successfully"
+  log "pocketdev.sh finished successfully"
 }
 
 main "$@"
