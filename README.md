@@ -22,7 +22,7 @@ Install programming languages, tools, editors, VS Code Server, AI coding assista
 ## Installation
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/debojitsantra/PocketDevTermux/main/pocketdev.sh)
+curl https://raw.githubusercontent.com/debojitsantra/PocketDevTermux/main/pocketdev.sh && bash pocketdev.sh
 ```
 
 
