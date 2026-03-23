@@ -2069,7 +2069,13 @@ main() {
   printf "  ${DIM}Pick profiles, re-run anytime. Already-installed tools are skipped.${R}\n"
   printf "  ${DIM}Log: ~/pocketdev.log${R}\n"
   echo ""
-  termux-setup-storage
+
+  if [ -d "$HOME/storage"]; then
+    echo "Storage already setup."
+  else
+    termux-setup-storage
+  fi
+
   press_enter
 
   # Update
