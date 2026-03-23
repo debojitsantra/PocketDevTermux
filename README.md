@@ -28,6 +28,11 @@ curl -O https://raw.githubusercontent.com/debojitsantra/PocketDevTermux/main/poc
 
 ---
 
+## Why this exists ?
+
+Setting up programming tools in Termux manually can take a long time. PocketDev automates the process and installs everything needed for development in one interactive setup.
+
+---
 
 ## Developer Profiles
 
@@ -152,6 +157,7 @@ After running, the installer creates:
 | `~/.pocketdev_state` | Tracked installed packages |
 
 ---
+
 
 ## License
 
