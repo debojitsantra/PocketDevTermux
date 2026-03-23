@@ -1968,6 +1968,11 @@ show_resources() {
   printf "  ${YELLOW}  Website    :${R}  https://getmimo.com\n"
   echo ""
 
+  printf "  ${CYAN}${BOLD}DataCamp${R}  ${DIM}-- interactive data science courses${R}\n"
+  printf "  ${YELLOW}  Play Store :${R}  https://play.google.com/store/apps/details?id=com.datacamp\n"
+  printf "  ${YELLOW}  Website    :${R}  https://www.datacamp.com/\n"
+  echo ""
+
   printf "  ${CYAN}${BOLD}Programming Hub${R}  ${DIM}-- 20+ languages, offline support, example programs${R}\n"
   printf "  ${YELLOW}  Play Store :${R}  https://play.google.com/store/apps/details?id=com.freeit.java\n"
   echo ""
