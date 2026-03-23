@@ -205,16 +205,13 @@ show_profiles() {
   printf "  ${CYAN}${BOLD}[ 6]${R}  ${WHITE}Rust Developer${R}\n"
   printf "       ${DIM}rustup, rustc, cargo, rust-analyzer${R}\n\n"
 
-  printf "  ${CYAN}${BOLD}[ 7]${R}  ${WHITE}Data Science / ML${R}\n"
-  printf "       ${DIM}Python + numpy, pandas, matplotlib, seaborn, scikit-learn, jupyter${R}\n\n"
-
-  printf "  ${CYAN}${BOLD}[ 8]${R}  ${WHITE}DevOps / Shell Scripting${R}\n"
+  printf "  ${CYAN}${BOLD}[ 7]${R}  ${WHITE}DevOps / Shell Scripting${R}\n"
   printf "       ${DIM}zsh, tmux, jq, bc, shellcheck, bat, lsd, fd, ripgrep${R}\n\n"
 
-  printf "  ${CYAN}${BOLD}[ 9]${R}  ${WHITE}Go Developer${R}\n"
+  printf "  ${CYAN}${BOLD}[ 8]${R}  ${WHITE}Go Developer${R}\n"
   printf "       ${DIM}Go toolchain, gofmt, gopls, air (hot reload)${R}\n\n"
 
-  printf "  ${CYAN}${BOLD}[10]${R}  ${WHITE}Polyglot (Everything)${R}\n"
+  printf "  ${CYAN}${BOLD}[ 9]${R}  ${WHITE}Polyglot (Everything)${R}\n"
   printf "       ${DIM}All profiles above combined${R}\n\n"
 
   hr '-' "$DIM"
@@ -223,17 +220,33 @@ show_profiles() {
 #base tools always installed
 install_base() {
   section "Base Tools"
+  
+  local base_pkgs=()
   for pkg in git curl wget tar zip unzip tree htop bc openssh; do
-    pkg_install "$pkg"
+    pkg_exists "$pkg" || base_pkgs+=("$pkg")
   done
+
+  if [[ ${#base_pkgs[@]} -gt 0 ]]; then
+    step "pkg install ${base_pkgs[*]}"
+    if DEBIAN_FRONTEND=noninteractive pkg install -y "${base_pkgs[@]}" >> "$LOG_FILE" 2>&1; then
+      ok
+      for pkg in "${base_pkgs[@]}"; do state_set "pkg:$pkg"; done
+    else
+      fail "base pkg install failed -- check $LOG_FILE"
+    fi
+  else
+    step "base packages (all already installed)"; skip
+  fi
 
   local gname gemail
   gname=$(git config --global user.name 2>/dev/null || true)
-  if [[ -z "$gname" ]]; then
+  gemail=$(git config --global user.email 2>/dev/null || true)
+  
+  if [[ -z "$gname" || "$gname" == "Coder" || "$gemail" == "coder@example.com" ]]; then
     echo ""
-    info "Git needs your name and email for commits."
-    ask gname  "Your name"  "Coder"
-    ask gemail "Your email" "coder@example.com"
+    info "Set your Git name and email (used in commits)."
+    ask gname  "Your name"  "${gname:-}"
+    ask gemail "Your email" "${gemail:-}"
     git config --global user.name  "$gname"
     git config --global user.email "$gemail"
     git config --global init.defaultBranch main
@@ -313,6 +326,12 @@ EOF
 install_web() {
   section "Web Developer"
   pkg_install nodejs
+ 
+  if ! has_cmd npm; then
+    pkg_install "nodejs-lts"
+  fi
+ 
+  export PATH="$PREFIX/bin:$PATH"
 
   npm_global "live-server"
   npm_global "prettier"
@@ -488,254 +507,37 @@ install_rust() {
   if has_cmd rustc; then
     step "rustc (already installed)"; skip
   else
-    step "Rust via rustup (this may take a while)"
-    echo ""
-    if curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --no-modify-path >> "$LOG_FILE" 2>&1; then
+    
+    step "rust (via pkg)"
+    if DEBIAN_FRONTEND=noninteractive pkg install -y rust >> "$LOG_FILE" 2>&1; then
       ok
-      export PATH="$HOME/.cargo/bin:$PATH"
+      state_set "pkg:rust"
+      
+      step "rustup default stable"
+      if rustup default stable >> "$LOG_FILE" 2>&1; then
+        ok
+      else
+        fail "rustup default stable failed -- run it manually"
+      fi
       grep -q '.cargo/bin' "$HOME/.bashrc" || \
         echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$HOME/.bashrc"
-      state_set "pkg:rustc"
+      export PATH="$HOME/.cargo/bin:$PATH"
     else
-      fail "rustup failed -- check $LOG_FILE"
+      fail "pkg install rust failed -- check $LOG_FILE"
       return
     fi
   fi
 
   if [[ ! -d "$PROJECTS_DIR/rust-starter" ]]; then
     if has_cmd cargo; then
-      step "Creating Rust starter with cargo"
+      step "rust starter project"
       cargo new "$PROJECTS_DIR/rust-starter" --name hello >> "$LOG_FILE" 2>&1 && ok || fail "cargo new failed"
     fi
   else
-    step "Rust starter project"; skip
+    step "rust starter project"; skip
   fi
 }
 
-#profile: data science
-install_datascience() {
-  section "Data Science / ML"
-  install_python
-
-  #tur-repo provides prebuilt wheels for numpy/scipy/pandas/matplotlib on Termux
-  #without it most scientific packages fail to build from source
-  step "tur-repo (prebuilt scientific packages)"
-  if pkg_exists "tur-repo"; then
-    skip
-  else
-    if DEBIAN_FRONTEND=noninteractive pkg install -y tur-repo >> "$LOG_FILE" 2>&1; then
-      ok
-      state_set "pkg:tur-repo"
-      #update after adding repo
-      pkg update -y >> "$LOG_FILE" 2>&1 || true
-    else
-      fail "tur-repo install failed -- scientific packages may not build correctly"
-    fi
-  fi
-
-  #build tools required for packages that still compile from source
-  for pkg in build-essential clang make cmake pkg-config binutils patchelf libzmq; do
-    pkg_install "$pkg"
-  done
-
-  #install from pkg where prebuilt wheels exist via tur-repo
-  #these avoid the painful from-source build path entirely
-  for pkg in python-numpy matplotlib python-scipy python-pandas; do
-    step "pkg install $pkg"
-    if pkg_exists "$pkg"; then
-      skip
-    elif DEBIAN_FRONTEND=noninteractive pkg install -y "$pkg" >> "$LOG_FILE" 2>&1; then
-      ok
-      state_set "pkg:$pkg"
-    else
-      fail "pkg install $pkg failed -- check $LOG_FILE"
-    fi
-  done
-
-  #detect python version for paths that need i
-  local pyver
-  pyver=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "3.12")
-
-  #fix openmp flag that causes build failures on Termux
-  step "OpenMP sysconfigdata fix"
-  local sysconfig_file
-  sysconfig_file=$(find "$PREFIX/lib/python${pyver}" -name "*sysconfigdata*.py" 2>/dev/null | head -1)
-  if [[ -n "$sysconfig_file" ]]; then
-    rm -rf "$PREFIX/lib/python${pyver}/__pycache__" 2>/dev/null || true
-    sed -i 's|-fno-openmp-implicit-rpath||g' "$sysconfig_file" 2>/dev/null && ok || warn "sysconfigdata patch failed"
-  else
-    skip
-  fi
-
-  #pyzmq needed for jupyter -- must be installed before jupyter
-  step "pip: pyzmq"
-  if python3 -c "import zmq" &>/dev/null 2>&1; then
-    skip
-  elif pip install --quiet --break-system-packages pyzmq >> "$LOG_FILE" 2>&1; then
-    ok
-    #patch zmq .so to link libpython explicitly 
-    local zmq_so
-    zmq_so=$(find "$PREFIX/lib/python${pyver}" -name "_zmq.cpython-*.so" 2>/dev/null | head -1)
-    if [[ -n "$zmq_so" ]] && has_cmd patchelf; then
-      patchelf --add-needed "libpython${pyver}.so" "$zmq_so" >> "$LOG_FILE" 2>&1 || true
-    fi
-    state_set "pip:pyzmq"
-  else
-    fail "pyzmq install failed"
-  fi
-
-  #jupyter and notebook
-  for pkg in jupyter jupyterlab ipykernel; do
-    pip_install "$pkg"
-  done
-
-  
-  step "pip: pandas (with LDFLAGS)"
-  if python3 -c "import pandas" &>/dev/null 2>&1; then
-    skip
-  else
-    if LDFLAGS="-lpython${pyver}" pip install --quiet --break-system-packages \
-         --no-build-isolation --no-cache-dir pandas >> "$LOG_FILE" 2>&1; then
-      ok
-      state_set "pip:pandas"
-    else
-      fail "pandas install failed -- check $LOG_FILE"
-    fi
-  fi
-
-  
-  step "pip: scikit-learn"
-  if python3 -c "import sklearn" &>/dev/null 2>&1; then
-    skip
-  else
-    if pip install --quiet --break-system-packages --no-build-isolation \
-         scikit-learn >> "$LOG_FILE" 2>&1; then
-      ok
-      state_set "pip:scikit-learn"
-    else
-      fail "scikit-learn install failed -- check $LOG_FILE"
-    fi
-  fi
-
-  
-  for pkg in seaborn openpyxl; do
-    pip_install "$pkg"
-  done
-
-  #opencv via pkg 
-  if confirm "  Install OpenCV (computer vision)?"; then
-    pkg_install "x11-repo"
-    step "pkg update after x11-repo"
-    pkg update -y >> "$LOG_FILE" 2>&1 && ok || fail "pkg update failed"
-    pkg_install "termux-x11-nightly"
-    pkg_install "opencv-python"
-    state_set "pkg:x11-repo"
-    state_set "pkg:termux-x11-nightly"
-    state_set "pkg:opencv-python"
-  fi
-
-  #termux-x11 for gui apps 
-  #only install if not already done via opencv block above
-  if ! pkg_exists "termux-x11-nightly"; then
-    if confirm "  Install termux-x11 for GUI/visual output (matplotlib interactive, etc.)?"; then
-      pkg_install "x11-repo"
-      step "pkg update after x11-repo"
-      pkg update -y >> "$LOG_FILE" 2>&1 && ok || fail "pkg update failed"
-      pkg_install "termux-x11-nightly"
-      state_set "pkg:x11-repo"
-      state_set "pkg:termux-x11-nightly"
-
-      #set DISPLAY so gui apps know where to render
-      grep -q 'DISPLAY=:0' "$HOME/.bashrc" || cat >> "$HOME/.bashrc" << 'X11ENV'
-
-#PocketDev: termux-x11 display
-export DISPLAY=:0
-X11ENV
-      step "DISPLAY=:0 env var"; ok
-
-      #write a launch helper for termux-x11
-      cat > "$HOME/start-x11.sh" << 'X11LAUNCH'
-#!/data/data/com.termux/files/usr/bin/bash
-#start termux-x11 session
-#open the Termux:X11 app on your phone first, then run this
-export DISPLAY=:0
-termux-x11 :0 &
-sleep 1
-echo "X11 session started. DISPLAY=:0"
-echo "You can now run GUI apps: python plot.py, jupyter lab, etc."
-X11LAUNCH
-      chmod +x "$HOME/start-x11.sh"
-      grep -q 'alias x11=' "$HOME/.bashrc" || \
-        echo "alias x11='bash ~/start-x11.sh'" >> "$HOME/.bashrc"
-      step "x11 launch script + alias"; ok
-
-      info "Install the Termux:X11 companion app to see the display:"
-      info "https://github.com/termux/termux-x11/releases"
-    fi
-  fi
-
-  #statsmodels is complex -- build from source with correct flags
-  if confirm "  Install statsmodels? (builds from source, takes several minutes)"; then
-    step "statsmodels (from source)"
-    local api_level
-    api_level=$(getprop ro.build.version.sdk 2>/dev/null || echo "34")
-    if CFLAGS="-U__ANDROID_API__ -D__ANDROID_API__=${api_level}" \
-       MATHLIB=m \
-       LDFLAGS="-lpython${pyver}" \
-       pip install --quiet --break-system-packages --no-build-isolation \
-         statsmodels >> "$LOG_FILE" 2>&1; then
-      ok
-      state_set "pip:statsmodels"
-    else
-      fail "statsmodels build failed -- check $LOG_FILE"
-    fi
-  fi
-
-  #clean pip cache to free space
-  step "pip cache purge"
-  pip cache purge >> "$LOG_FILE" 2>&1 && ok || skip
-
-  if [[ ! -d "$PROJECTS_DIR/datascience-starter" ]]; then
-    mkdir -p "$PROJECTS_DIR/datascience-starter"
-    cat > "$PROJECTS_DIR/datascience-starter/explore.py" << 'EOF'
-"""
-Data Science Starter
-Run: python explore.py
-"""
-import numpy as np
-import pandas as pd
-import matplotlib
-#use TkAgg if termux-x11 is running (DISPLAY set), else save to file
-import os
-if os.environ.get("DISPLAY"):
-    matplotlib.use('TkAgg')
-else:
-    matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-
-rng = np.random.default_rng(42)
-data = pd.DataFrame({
-    "x": np.arange(20),
-    "y": rng.normal(loc=5, scale=2, size=20),
-    "category": np.tile(["A", "B"], 10),
-})
-
-print(data.describe())
-print("\nGrouped means:")
-print(data.groupby("category")["y"].mean())
-
-fig, ax = plt.subplots()
-ax.plot(data["x"], data["y"], marker="o")
-ax.set_title("Sample Plot")
-fig.savefig("plot.png", dpi=100)
-print("\nPlot saved to plot.png")
-EOF
-    step "Data science starter project"; ok
-  fi
-}
-
-# ── Profile: DevOps / Shell ──────────────────────────────────
 #profile: devops/shell
 install_devops() {
   section "DevOps / Shell Scripting"
@@ -780,7 +582,7 @@ EOF
   fi
 }
 
-# ── Profile: Go ──────────────────────────────────────────────
+
 #profile: go
 install_go() {
   section "Go Developer"
@@ -912,7 +714,7 @@ EOF
 }
 
 
-#extras
+#optional extras
 setup_extras() {
   section "Optional Extras"
   echo ""
@@ -937,10 +739,6 @@ EOF
     grep -q 'alias n=' "$HOME/.bashrc" || echo "alias n='nnn -de'" >> "$HOME/.bashrc"
   fi
 
-  if confirm "  Install bottom (btm) -- modern system monitor?"; then
-    pkg_install "bottom"
-  fi
-
   # Shell polish
   local bashrc="$HOME/.bashrc"
   grep -q '# PocketDev: QoL aliases' "$bashrc" || cat >> "$bashrc" << 'QOLALIASES'
@@ -960,6 +758,7 @@ QOLALIASES
   # hushlogin to suppress Termux motd
   touch "$HOME/.hushlogin" 2>/dev/null || true
 }
+
 
 #version check table
 print_version_table() {
@@ -995,58 +794,6 @@ print_version_table() {
 }
 
 
-#optional: vscode server
-setup_vscode_server() {
-  section "VS Code Server (code-server)"
-  echo ""
-  printf "  ${DIM}Runs VS Code in browser at http://localhost:8080. Needs Node.js.${R}\n\n"
-
-  if ! confirm "  Install code-server (VS Code in browser)?"; then
-    step "code-server"; skip; return
-  fi
-
-  # Needs nodejs
-  if ! has_cmd node; then
-    info "Node.js is required. Installing it first..."
-    pkg_install "nodejs"
-  fi
-
-  step "Installing code-server via npm (may take a few minutes)"
-  echo ""
-  if npm install -g code-server >> "$LOG_FILE" 2>&1; then
-    ok
-    state_set "npm:code-server"
-  else
-    fail "code-server install failed -- check $LOG_FILE"
-    return
-  fi
-
-  # Write a launch script
-  cat > "$HOME/start-vscode.sh" << 'VSLAUNCH'
-#!/data/data/com.termux/files/usr/bin/bash
-# Start VS Code Server
-# Open http://localhost:8080 in your browser after running this
-echo ""
-echo "  Starting VS Code Server..."
-echo "  Open your browser and go to: http://localhost:8080"
-echo "  Press Ctrl+C to stop."
-echo ""
-code-server --bind-addr 0.0.0.0:8080 --auth none "$HOME/projects" 2>&1
-VSLAUNCH
-  chmod +x "$HOME/start-vscode.sh"
-  step "Launch script: ~/start-vscode.sh"; ok
-
-  # Write systemd-style alias
-  grep -q 'alias vscode=' "$HOME/.bashrc" || \
-    echo "alias vscode='bash ~/start-vscode.sh'" >> "$HOME/.bashrc"
-  step "Shell alias: vscode"; ok
-
-  echo ""
-  info "Run 'vscode' or 'bash ~/start-vscode.sh' to start."
-  info "Open http://localhost:8080 in your browser."
-}
-
-
 #optional: ai coding assistant
 setup_ai_assistant() {
   section "AI Coding Assistant"
@@ -1078,28 +825,32 @@ setup_ai_assistant() {
         info "Python required for shell-gpt. Installing..."
         pkg_install "python"; pkg_install "python-pip"
       fi
-      pip_install "shell-gpt" "sgpt"
+     
+      local api_level; api_level=$(getprop ro.build.version.sdk 2>/dev/null || echo "34")
+      step "pip: shell-gpt"
+      if python3 -c "import sgpt" &>/dev/null 2>&1; then
+        skip
+      elif ANDROID_API_LEVEL="$api_level" pip install --quiet --break-system-packages shell-gpt >> "$LOG_FILE" 2>&1; then
+        ok
+        state_set "pip:shell-gpt"
+      else
+        fail "shell-gpt install failed -- check $LOG_FILE"
+      fi
       info "shell-gpt uses OpenAI by default. Set key: export OPENAI_API_KEY=your_key"
       ;;&
     3|4)
       step "tgpt (no API key needed)"
       if has_cmd tgpt; then skip
       else
-        if curl -sSL https://raw.githubusercontent.com/aandrew-me/tgpt/main/install \
-             | bash >> "$LOG_FILE" 2>&1; then
-          ok
+       
+        local arch; arch=$(uname -m)
+        local tgpt_bin="tgpt-linux-arm64"
+        [[ "$arch" == "x86_64" ]] && tgpt_bin="tgpt-linux-amd64"
+        if curl -sL "https://github.com/aandrew-me/tgpt/releases/latest/download/${tgpt_bin}" \
+             -o "$PREFIX/bin/tgpt" >> "$LOG_FILE" 2>&1; then
+          chmod +x "$PREFIX/bin/tgpt"; ok
         else
-          # Manual download fallback
-          local arch; arch=$(uname -m)
-          local tgpt_bin="tgpt-linux-arm64"
-          [[ "$arch" == "x86_64" ]] && tgpt_bin="tgpt-linux-amd64"
-          step "tgpt binary download"
-          if curl -sL "https://github.com/aandrew-me/tgpt/releases/latest/download/${tgpt_bin}" \
-               -o "$PREFIX/bin/tgpt" >> "$LOG_FILE" 2>&1; then
-            chmod +x "$PREFIX/bin/tgpt"; ok
-          else
-            fail "tgpt download failed"
-          fi
+          fail "tgpt download failed"
         fi
       fi
       ;;
@@ -1113,91 +864,6 @@ setup_ai_assistant() {
   printf "  ${DIM}tgpt 'explain what a for loop is in Python'${R}\n"
   printf "  ${DIM}tgpt 'fix this error: ...'${R}\n"
   printf "  ${DIM}sgpt 'write a bash function to backup files'${R}\n"
-}
-
-
-#optional: local llm via ollama
-setup_local_llm() {
-  section "Local LLM for Coding"
-  echo ""
-  printf "  ${DIM}Runs LLMs locally via Ollama. No internet after model download.${R}\n"
-  printf "  ${DIM}Needs 4GB+ free RAM for 7B models.${R}\n\n"
-
-  if ! confirm "  Install Ollama + a local coding model?"; then
-    step "local LLM"; skip; return
-  fi
-
-  # Install Ollama
-  step "Ollama"
-  if has_cmd ollama; then
-    skip
-  else
-    if curl -fsSL https://ollama.com/install.sh | sh >> "$LOG_FILE" 2>&1; then
-      ok
-    else
-      fail "Ollama install failed -- check $LOG_FILE"
-      info "Manual install: https://ollama.com/download/linux"
-      return
-    fi
-  fi
-
-  # Pick model
-  echo ""
-  printf "  Which coding model do you want to pull?\n\n"
-  printf "  ${CYAN}[1]${R}  qwen2.5-coder:1.5b  ${DIM}-- ~1GB, fast, good for most tasks${R}\n"
-  printf "  ${CYAN}[2]${R}  qwen2.5-coder:7b    ${DIM}-- ~4GB, smarter, needs more RAM${R}\n"
-  printf "  ${CYAN}[3]${R}  codellama:7b        ${DIM}-- ~4GB, Meta's coding model${R}\n"
-  printf "  ${CYAN}[4]${R}  deepseek-coder:1.3b ${DIM}-- ~800MB, tiny and surprisingly good${R}\n"
-  printf "  ${CYAN}[5]${R}  skip (pull manually later with: ollama pull <model>)\n"
-  echo ""
-  ask llm_model_choice "Your choice" "1"
-
-  local model_name=""
-  case "$llm_model_choice" in
-    1) model_name="qwen2.5-coder:1.5b" ;;
-    2) model_name="qwen2.5-coder:7b"   ;;
-    3) model_name="codellama:7b"        ;;
-    4) model_name="deepseek-coder:1.3b" ;;
-    5|*) step "model pull"; skip ;;
-  esac
-
-  if [[ -n "$model_name" ]]; then
-    echo ""
-    printf "  ${DIM}Pulling %s -- this downloads the model, may take a while...${R}\n\n" "$model_name"
-    step "ollama pull $model_name"
-    echo ""
-    if ollama pull "$model_name" 2>&1 | tee -a "$LOG_FILE" | grep -E 'pulling|success|error' | tail -5; then
-      ok
-    else
-      fail "model pull failed -- try manually: ollama pull $model_name"
-    fi
-  fi
-
-  # Write a launch helper
-  cat > "$HOME/start-ollama.sh" << 'OLLAUNCH'
-#!/data/data/com.termux/files/usr/bin/bash
-# Start Ollama and open an interactive coding chat
-echo ""
-echo "  Starting Ollama..."
-ollama serve &>/dev/null &
-sleep 2
-
-echo "  Available models:"
-ollama list
-echo ""
-echo "  Tip: ollama run qwen2.5-coder:1.5b"
-echo "       Then type your coding question."
-echo ""
-OLLAUNCH
-  chmod +x "$HOME/start-ollama.sh"
-  grep -q 'alias llm=' "$HOME/.bashrc" || \
-    echo "alias llm='bash ~/start-ollama.sh'" >> "$HOME/.bashrc"
-  step "Launch alias: llm"; ok
-
-  echo ""
-  info "Start Ollama:  ollama serve"
-  info "Chat:          ollama run $model_name"
-  info "Alias: llm"
 }
 
 
@@ -1246,7 +912,7 @@ setup_linux_container() {
     fi
   fi
 
-  
+ 
   local login_script="$HOME/linux.sh"
   cat > "$login_script" << LOGINSCRIPT
 #!/data/data/com.termux/files/usr/bin/bash
@@ -1654,6 +1320,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/utils.sh"
 
+
 #entry point
 main() {
   log "Script started"
@@ -1768,7 +1435,7 @@ jupyter notebook
 EOF
 }
 
-
+# ── Main interactive flow ──────────────────────────────────
 
 template="${1:-}"
 proj_name="${2:-}"
@@ -1845,7 +1512,399 @@ NEWPROJECT
 }
 
 
-#resources: apps and learning links
+run_tests() {
+  local PASS=0 FAIL=0 SKIP=0
+  local TEST_DIR
+  TEST_DIR=$(mktemp -d)
+  local TEST_LOG="$HOME/pocketdev-test.log"
+
+  {
+    echo "========================================"
+    echo " PocketDevTermux test run -- $(date)"
+    echo "========================================"
+  } > "$TEST_LOG"
+
+  tlog() { printf "[%s] %s\n" "$(date '+%H:%M:%S')" "$*" >> "$TEST_LOG"; }
+
+  clear
+  hr '='
+  printf "${WHITE}${BOLD}  >>  PocketDevTermux -- Test Suite${R}\n"
+  printf "      Testing all installed tools and languages\n"
+  hr '='
+  echo ""
+  printf "  ${DIM}Temp dir: %s${R}\n" "$TEST_DIR"
+  printf "  ${DIM}Log:      %s${R}\n\n" "$TEST_LOG"
+
+ 
+  t() {
+    local name="$1" cmd="$2"
+    printf "  ${CYAN}-->${R}  %-48s" "$name"
+    tlog "TEST: $name"
+    tlog "CMD:  $cmd"
+    if eval "$cmd" >> "$TEST_LOG" 2>&1; then
+      printf " ${GREEN}${BOLD}[ PASS ]${R}\n"
+      tlog "RESULT: PASS"
+      (( PASS++ )) || true
+    else
+      printf " ${RED}${BOLD}[ FAIL ]${R}\n"
+      tlog "RESULT: FAIL"
+      (( FAIL++ )) || true
+    fi
+  }
+
+  ts() {
+    local name="$1"
+    printf "  ${DIM}--   %-48s [ SKIP ]${R}\n" "$name"
+    tlog "SKIP: $name"
+    (( SKIP++ )) || true
+  }
+
+  
+  tc() {
+    local cmd_check="$1" name="$2" test_cmd="$3"
+    if has_cmd "$cmd_check"; then
+      t "$name" "$test_cmd"
+    else
+      ts "$name"
+    fi
+  }
+
+  
+  section "Base Tools"
+
+  t  "git version"          "git --version"
+  t  "curl fetch"           "curl -fsSL --max-time 5 https://example.com -o /dev/null"
+  t  "wget fetch"           "wget -q --timeout=5 https://example.com -O /dev/null"
+  tc "tmux"  "tmux version"          "tmux -V"
+  tc "jq"    "jq parse"              "echo '{\"a\":1}' | jq .a"
+  tc "fzf"   "fzf version"           "fzf --version"
+  tc "gh"    "gh version"            "gh --version"
+  tc "rg"    "ripgrep search"        "echo 'hello world' | rg 'hello'"
+  tc "fd"    "fd find"               "fd --version"
+  tc "bat"   "bat version"           "bat --version"
+  tc "htop"  "htop version"          "htop --version"
+
+  
+  section "Python"
+
+  if has_cmd python; then
+  
+    cat > "$TEST_DIR/test_python.py" << 'PYEOF'
+import sys, os, math, json, pathlib
+assert sys.version_info >= (3, 8), "Python 3.8+ required"
+assert math.sqrt(9) == 3.0
+data = json.dumps({"status": "ok"})
+assert json.loads(data)["status"] == "ok"
+print("python core ok")
+PYEOF
+    t  "python core"            "python $TEST_DIR/test_python.py"
+    t  "pip version"            "pip --version"
+    tc "ipython" "ipython version"    "ipython --version"
+    tc "black"   "black check"        "black --version"
+    tc "pylint"  "pylint version"     "pylint --version"
+
+   
+    cat > "$TEST_DIR/test_ds.py" << 'DSEOF'
+results = []
+def try_import(name, import_as=None):
+    try:
+        __import__(import_as or name)
+        results.append(f"  + {name}")
+    except ImportError:
+        results.append(f"  - {name} NOT FOUND")
+
+try_import("numpy")
+try_import("pandas")
+try_import("matplotlib")
+try_import("scipy")
+try_import("sklearn", "sklearn")
+try_import("seaborn")
+try_import("jupyter")
+try_import("ipykernel")
+try_import("openpyxl")
+try_import("requests")
+try_import("rich")
+try_import("flask")
+try_import("cv2")
+
+for r in results:
+    print(r)
+
+failures = [r for r in results if "NOT FOUND" in r]
+if failures:
+    print(f"\n{len(failures)} package(s) missing")
+    exit(1)
+DSEOF
+    t  "python packages"        "python $TEST_DIR/test_ds.py"
+
+  
+    cat > "$TEST_DIR/test_numpy.py" << 'NPEOF'
+import numpy as np
+a = np.array([1,2,3,4,5])
+assert np.mean(a) == 3.0
+assert np.std(a) > 0
+b = np.random.default_rng(0).normal(0, 1, 1000)
+assert -0.5 < np.mean(b) < 0.5
+print("numpy math ok")
+NPEOF
+    tc "python" "numpy math"         "python $TEST_DIR/test_numpy.py"
+
+   
+    cat > "$TEST_DIR/test_pandas.py" << 'PDEOF'
+import pandas as pd, numpy as np
+df = pd.DataFrame({"x": range(10), "y": np.random.default_rng(1).random(10)})
+assert len(df) == 10
+assert df["x"].sum() == 45
+grouped = df.groupby(df["x"] % 2)["y"].mean()
+assert len(grouped) == 2
+print("pandas ok")
+PDEOF
+    tc "python" "pandas dataframe"   "python $TEST_DIR/test_pandas.py"
+
+   
+    cat > "$TEST_DIR/test_mpl.py" << 'MPLEOF'
+import os
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import numpy as np
+fig, ax = plt.subplots()
+ax.plot(np.linspace(0, 2*np.pi, 100), np.sin(np.linspace(0, 2*np.pi, 100)))
+ax.set_title("sine wave")
+out = "/tmp/pocketdev_test_plot.png"
+fig.savefig(out)
+assert os.path.exists(out) and os.path.getsize(out) > 0
+print(f"matplotlib render ok -> {out}")
+MPLEOF
+    tc "python" "matplotlib render"  "python $TEST_DIR/test_mpl.py"
+
+  else
+    ts "python (not installed)"
+  fi
+
+  
+  section "Node.js / Web"
+
+  if has_cmd node; then
+    cat > "$TEST_DIR/test_node.js" << 'JSEOF'
+const assert = require('assert');
+const http = require('http');
+assert.strictEqual(typeof process.version, 'string');
+const arr = [1,2,3].map(x => x * 2);
+assert.deepStrictEqual(arr, [2,4,6]);
+const obj = JSON.parse('{"ok":true}');
+assert.strictEqual(obj.ok, true);
+console.log('node core ok, version', process.version);
+JSEOF
+    t  "node core"             "node $TEST_DIR/test_node.js"
+    t  "npm version"           "npm --version"
+    tc "tsc"        "typescript version"  "tsc --version"
+    tc "ts-node"    "ts-node version"     "ts-node --version"
+    tc "nodemon"    "nodemon version"     "nodemon --version"
+    tc "prettier"   "prettier version"    "prettier --version"
+    tc "eslint"     "eslint version"      "eslint --version"
+    tc "live-server" "live-server version" "live-server --version"
+  else
+    ts "node (not installed)"
+  fi
+
+  
+  section "C / C++"
+
+  if has_cmd clang; then
+    cat > "$TEST_DIR/test.c" << 'CEOF'
+#include <stdio.h>
+#include <assert.h>
+#include <math.h>
+int add(int a, int b) { return a + b; }
+int main(void) {
+    assert(add(2, 3) == 5);
+    assert((int)sqrt(16.0) == 4);
+    printf("C ok\n");
+    return 0;
+}
+CEOF
+    t  "clang compile"         "clang -o $TEST_DIR/test_c $TEST_DIR/test.c -lm"
+    t  "C binary run"          "$TEST_DIR/test_c"
+
+    cat > "$TEST_DIR/test.cpp" << 'CPPEOF'
+#include <iostream>
+#include <vector>
+#include <numeric>
+#include <cassert>
+int main() {
+    std::vector<int> v = {1,2,3,4,5};
+    int sum = std::accumulate(v.begin(), v.end(), 0);
+    assert(sum == 15);
+    std::cout << "C++ ok" << std::endl;
+    return 0;
+}
+CPPEOF
+    t  "clang++ compile"       "clang++ -std=c++17 -o $TEST_DIR/test_cpp $TEST_DIR/test.cpp"
+    t  "C++ binary run"        "$TEST_DIR/test_cpp"
+    tc "cmake" "cmake version"        "cmake --version"
+    tc "make"  "make version"         "make --version"
+  else
+    ts "clang (not installed)"
+  fi
+
+  
+  section "Java"
+
+  if has_cmd javac; then
+    cat > "$TEST_DIR/TestJava.java" << 'JAVAEOF'
+public class TestJava {
+    static int factorial(int n) { return n <= 1 ? 1 : n * factorial(n-1); }
+    public static void main(String[] args) {
+        assert factorial(5) == 120 : "factorial failed";
+        System.out.println("Java ok, version " + System.getProperty("java.version"));
+    }
+}
+JAVAEOF
+    t  "javac compile"         "javac -d $TEST_DIR $TEST_DIR/TestJava.java"
+    t  "java run"              "java -cp $TEST_DIR TestJava"
+    tc "gradle" "gradle version"      "gradle --version"
+  else
+    ts "java (not installed)"
+  fi
+
+  
+  section "Kotlin"
+
+  if has_cmd kotlinc; then
+    cat > "$TEST_DIR/test.kt" << 'KTEOF'
+fun main() {
+    val nums = listOf(1,2,3,4,5)
+    val sum = nums.sum()
+    check(sum == 15) { "sum failed: $sum" }
+    println("Kotlin ok")
+}
+KTEOF
+    t  "kotlinc compile"       "kotlinc $TEST_DIR/test.kt -include-runtime -d $TEST_DIR/test_kt.jar"
+    t  "kotlin jar run"        "java -jar $TEST_DIR/test_kt.jar"
+  else
+    ts "kotlin (not installed)"
+  fi
+
+  
+  section "Rust"
+
+  if has_cmd rustc; then
+    cat > "$TEST_DIR/test.rs" << 'RSEOF'
+fn fibonacci(n: u64) -> u64 {
+    match n { 0 => 0, 1 => 1, _ => fibonacci(n-1) + fibonacci(n-2) }
+}
+fn main() {
+    assert_eq!(fibonacci(10), 55);
+    println!("Rust ok");
+}
+RSEOF
+    t  "rustc compile"         "rustc $TEST_DIR/test.rs -o $TEST_DIR/test_rs"
+    t  "rust binary run"       "$TEST_DIR/test_rs"
+    tc "cargo" "cargo version"        "cargo --version"
+  else
+    ts "rust (not installed)"
+  fi
+
+ 
+  section "Go"
+
+  if has_cmd go; then
+    cat > "$TEST_DIR/test.go" << 'GOEOF'
+package main
+
+import (
+    "fmt"
+    "sort"
+)
+
+func main() {
+    s := []int{5, 2, 4, 1, 3}
+    sort.Ints(s)
+    if s[0] != 1 || s[4] != 5 {
+        panic("sort failed")
+    }
+    fmt.Println("Go ok")
+}
+GOEOF
+    t  "go run"                "go run $TEST_DIR/test.go"
+    t  "go build"              "go build -o $TEST_DIR/test_go $TEST_DIR/test.go"
+    t  "go binary run"         "$TEST_DIR/test_go"
+  else
+    ts "go (not installed)"
+  fi
+
+  
+  section "Shell / DevOps"
+
+  cat > "$TEST_DIR/test.sh" << 'SHEOF'
+#!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+result=$(echo "hello world" | tr '[:lower:]' '[:upper:]')
+[[ "$result" == "HELLO WORLD" ]] || exit 1
+nums=(1 2 3 4 5)
+total=0
+for n in "${nums[@]}"; do (( total += n )); done
+[[ $total -eq 15 ]] || exit 1
+echo "bash ok"
+SHEOF
+  chmod +x "$TEST_DIR/test.sh"
+  t  "bash script"            "bash $TEST_DIR/test.sh"
+  tc "zsh"        "zsh version"         "zsh --version"
+  tc "shellcheck" "shellcheck lint"     "shellcheck $TEST_DIR/test.sh"
+  tc "jq"         "jq transform"        "echo '[1,2,3]' | jq 'map(. * 2)'"
+
+  
+  section "Editors"
+
+  tc "micro"  "micro version"        "micro --version"
+  tc "nano"   "nano version"         "nano --version"
+  tc "vim"    "vim version"          "vim --version"
+  tc "nvim"   "neovim version"       "nvim --version"
+  tc "hx"     "helix version"        "hx --version"
+
+  
+  section "AI / LLM Tools"
+
+  tc "aichat"   "aichat version"     "aichat --version"
+  tc "tgpt"     "tgpt version"       "tgpt --version"
+  tc "sgpt"     "sgpt version"       "sgpt --version"
+
+  
+  section "Network & System"
+
+  t  "internet (curl)"        "curl -fsSL --max-time 8 https://httpbin.org/get -o /dev/null"
+  t  "dns resolution"         "curl -fsSL --max-time 5 https://1.1.1.1 -o /dev/null"
+  tc "ssh"    "ssh version"          "ssh -V"
+
+  
+  #cleanup
+  rm -rf "$TEST_DIR"
+
+  #results
+  local total=$(( PASS + FAIL + SKIP ))
+  echo ""
+  hr '='
+  printf "${WHITE}${BOLD}  Test Results${R}\n"
+  hr '-' "$DIM"
+  printf "  ${GREEN}${BOLD}PASS${R}  %d\n" "$PASS"
+  printf "  ${RED}${BOLD}FAIL${R}  %d\n" "$FAIL"
+  printf "  ${DIM}SKIP  %d${R}\n" "$SKIP"
+  printf "  ${DIM}TOTAL %d${R}\n" "$total"
+  hr '-' "$DIM"
+
+  if [[ $FAIL -eq 0 ]]; then
+    printf "  ${GREEN}${BOLD}All tests passed.${R}\n"
+  else
+    printf "  ${YELLOW}%d test(s) failed. Check %s for details.${R}\n" "$FAIL" "$TEST_LOG"
+  fi
+  hr '='
+  echo ""
+  printf "  ${DIM}Full test log: %s${R}\n\n" "$TEST_LOG"
+}
+
+
+
 show_resources() {
   clear
   hr '='
@@ -1971,6 +2030,12 @@ print_summary() {
 
 
 main() {
+  
+  if [[ "${1:-}" == "--test" ]]; then
+    run_tests
+    exit $?
+  fi
+
   # Init log
   {
     echo "========================================"
@@ -2014,10 +2079,9 @@ main() {
       4)  install_java        ;;
       5)  install_kotlin      ;;
       6)  install_rust        ;;
-      7)  install_datascience ;;
-      8)  install_devops      ;;
-      9)  install_go          ;;
-      10) install_polyglot    ;;
+      7)  install_devops      ;;
+      8)  install_go          ;;
+      9)  install_polyglot    ;;
       *)  printf "  ${YELLOW}Unknown profile %s -- skipped${R}\n" "$p" ;;
     esac
   done
@@ -2039,13 +2103,7 @@ main() {
   echo ""
   press_enter
 
-  setup_vscode_server
-  press_enter
-
   setup_ai_assistant
-  press_enter
-
-  setup_local_llm
   press_enter
 
   setup_linux_container
