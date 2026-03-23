@@ -41,10 +41,9 @@ Run the script and pick one or more profiles. You can combine them freely.
 | 4 | Java | OpenJDK 17, Gradle, Maven |
 | 5 | Kotlin | OpenJDK 17, Kotlin compiler |
 | 6 | Rust | rustup, rustc, cargo |
-| 7 | Data Science | Python + numpy, pandas, matplotlib, seaborn, scikit-learn, jupyter |
-| 8 | DevOps / Shell | zsh, tmux, jq, shellcheck, ripgrep, fd, bat, lsd |
-| 9 | Go | Go toolchain, air (hot reload) |
-| 10 | Polyglot | All of the above |
+| 7 | DevOps / Shell | zsh, tmux, jq, shellcheck, ripgrep, fd, bat, lsd |
+| 8 | Go | Go toolchain, air (hot reload) |
+| 9 | Polyglot | All of the above |
 
 Multiple profiles can be selected at once:
 
@@ -56,44 +55,13 @@ Enter profile number(s): 1 3 7
 
 ## Optional Features
 
-After the base profile setup, the installer offers five optional power features.
-
-### VS Code Server
-
-Installs [code-server](https://github.com/coder/code-server) and runs VS Code in your phone's browser at `http://localhost:8080`. Full editor with syntax highlighting, file tree, terminal, and extension support.
-
-Start it after install:
-
-```bash
-vscode
-```
-
 ### AI Coding Assistant
 
 Choose from three CLI AI tools:
 
 - **aichat** — supports GPT, Claude, Gemini, and Ollama backends
-- **shell-gpt** — Python-based, works with OpenAI or local models
 - **tgpt** — no API key required, uses free public backends
 
-### Local LLM
-
-Installs [Ollama](https://ollama.com) and pulls a coding model of your choice. Runs fully offline after the initial download.
-
-Models that work on my devices:
-
-| Model | Size | Notes |
-|-------|------|-------|
-| qwen2.5-coder:1.5b | ~1GB | Fast, recommended for most devices |
-| qwen2.5-coder:7b | ~4GB | More capable, needs more RAM |
-| codellama:7b | ~4GB | Meta's coding model |
-| deepseek-coder:1.3b | ~800MB | Smallest, surprisingly capable |
-
-Start Ollama after install:
-
-```bash
-llm
-```
 
 ### Linux Container
 
@@ -119,7 +87,6 @@ newproject express  my-api
 newproject c        my-tool
 newproject rust     my-crate
 newproject go       my-service
-newproject datasci  my-analysis
 ```
 
 Run `newproject` with no arguments to see all available templates.
@@ -157,10 +124,9 @@ The uninstaller:
 - Reads `~/.pocketdev_state` to identify installed packages
 - Falls back to a known package list if the state file is missing
 - Removes pkg, pip, and npm packages
-- Removes Rust, Go, Ollama, Oh-My-Zsh, and proot containers
+- Removes Rust, Go, Oh-My-Zsh, and proot containers
 - Strips all PocketDevTermux blocks from `~/.bashrc`
 - Backs up `~/.bashrc` before modifying it
-- Asks before deleting `~/projects`
 - Writes a full removal log to `~/pocketdev-uninstall.log`
 
 
@@ -170,8 +136,6 @@ After running, the installer creates:
 ```
 ~/
 ├── projects/                 # starter projects, one per profile
-├── start-vscode.sh           # launch code-server
-├── start-ollama.sh           # start Ollama and list models
 ├── linux.sh                  # enter proot container
 ├── .pocketdev_state          # install tracking
 └── pocketdev.log             # install log
