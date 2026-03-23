@@ -833,33 +833,56 @@ setup_linux_container() {
   echo ""
   printf "  ${DIM}Full Linux rootfs inside Termux via proot-distro. No root needed.${R}\n\n"
 
-  
   step "proot-distro"
   if pkg_exists "proot-distro"; then skip
   else
     pkg_install "proot-distro"
   fi
 
-  #fetch available distro from proot-distro
+  #hardcoded distro list matching current proot-distro supported distros
+  local names=(
+    "Adélie Linux"
+    "AlmaLinux"
+    "Alpine Linux"
+    "Arch Linux"
+    "Artix Linux"
+    "Chimera Linux"
+    "Debian (trixie)"
+    "Deepin"
+    "Fedora"
+    "Manjaro"
+    "OpenSUSE"
+    "Oracle Linux"
+    "Pardus"
+    "Rocky Linux"
+    "Termux"
+    "Trisquel GNU/Linux"
+    "Ubuntu (25.10)"
+    "Void Linux"
+  )
+  local slugs=(
+    "adelie"
+    "almalinux"
+    "alpine"
+    "archlinux"
+    "artix"
+    "chimera"
+    "debian"
+    "deepin"
+    "fedora"
+    "manjaro"
+    "opensuse"
+    "oracle"
+    "pardus"
+    "rockylinux"
+    "termux"
+    "trisquel"
+    "ubuntu"
+    "void"
+  )
+
   section "Available Distros"
-  printf "  ${DIM}Fetching list from proot-distro...${R}\n\n"
-  local distro_list
-  distro_list=$(proot-distro list 2>/dev/null | grep '^\s*\*' | sed 's/.*\* //' | sed 's/ < / (/' | sed 's/ >/)')
-  if [[ -z "$distro_list" ]]; then
-    printf "  ${RED}Could not fetch distro list.${R}\n"
-    return
-  fi
-
-
-  local names=() slugs=()
-  while IFS= read -r line; do
-    local name slug
-    name=$(echo "$line" | sed 's/ (.*//')
-    slug=$(echo "$line" | grep -oP '\(\K[^)]+')
-    names+=("$name")
-    slugs+=("$slug")
-  done <<< "$distro_list"
-
+  echo ""
   local i
   for i in "${!names[@]}"; do
     printf "  ${CYAN}[%2d]${R}  %-30s ${DIM}%s${R}\n" "$((i+1))" "${names[$i]}" "${slugs[$i]}"
@@ -887,6 +910,7 @@ setup_linux_container() {
     ok
     state_set "proot:$distro_slug"
   else
+    #already installed counts as success
     if proot-distro list 2>/dev/null | grep -q "$distro_slug"; then
       skip
     else
