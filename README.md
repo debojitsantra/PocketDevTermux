@@ -9,7 +9,9 @@
 
 PocketDevTermux turns [Termux](https://termux.dev)  into a complete mobile development workstation.
 Install programming languages, tools, editors, AI coding assistants, and a full Linux container all from one interactive installer.
+## Demo
 
+![PocketDev Demo](demo.gif)
 ---
 
 ## Requirements
