@@ -508,17 +508,12 @@ install_rust() {
     step "rustc (already installed)"; skip
   else
     
-    step "rust (via pkg)"
+    step "rust"
     if DEBIAN_FRONTEND=noninteractive pkg install -y rust >> "$LOG_FILE" 2>&1; then
       ok
       state_set "pkg:rust"
       
-      step "rustup default stable"
-      if rustup default stable >> "$LOG_FILE" 2>&1; then
-        ok
-      else
-        fail "rustup default stable failed -- run it manually"
-      fi
+      
       grep -q '.cargo/bin' "$HOME/.bashrc" || \
         echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$HOME/.bashrc"
       export PATH="$HOME/.cargo/bin:$PATH"
@@ -798,72 +793,37 @@ print_version_table() {
 setup_ai_assistant() {
   section "AI Coding Assistant"
   echo ""
-  printf "  ${CYAN}[2]${R}  shell-gpt    ${DIM}-- Python CLI tool, uses OpenAI/local models${R}\n"
-  printf "  ${CYAN}[3]${R}  tgpt         ${DIM}-- no API key needed, uses free AI backends${R}\n"
-  printf "  ${CYAN}[4]${R}  all of them\n"
-  printf "  ${CYAN}[5]${R}  skip\n"
+  printf "  ${CYAN}[1]${R}  aichat \n" 
+  printf "  ${CYAN}[2]${R}  tgpt \n"   
+  printf "  ${CYAN}[3]${R}  both \n"
+  printf "  ${CYAN}[4]${R}  skip\n"
   echo ""
-  ask ai_choice "Your choice" "5"
+  ask ai_choice "Your choice" "4"
 
   case "$ai_choice" in
-    1|4)
+    1|3)
       step "aichat"
       if has_cmd aichat; then skip
       else
-        pkg_install "aichat" || {
-          # fallback: try cargo
-          if has_cmd cargo; then
-            cargo install aichat >> "$LOG_FILE" 2>&1 && ok || fail "aichat install failed"
-          else
-            fail "aichat unavailable -- install cargo (Rust profile) first"
-          fi
-        }
+        pkg_install "aichat" || fail "aichat unavailable"
       fi
       ;;&
-    2|4)
-      if ! has_cmd python; then
-        info "Python required for shell-gpt. Installing..."
-        pkg_install "python"; pkg_install "python-pip"
-      fi
-     
-      local api_level; api_level=$(getprop ro.build.version.sdk 2>/dev/null || echo "34")
-      step "pip: shell-gpt"
-      if python3 -c "import sgpt" &>/dev/null 2>&1; then
-        skip
-      elif ANDROID_API_LEVEL="$api_level" pip install --quiet --break-system-packages shell-gpt >> "$LOG_FILE" 2>&1; then
-        ok
-        state_set "pip:shell-gpt"
-      else
-        fail "shell-gpt install failed -- check $LOG_FILE"
-      fi
-      info "shell-gpt uses OpenAI by default. Set key: export OPENAI_API_KEY=your_key"
-      ;;&
-    3|4)
-      step "tgpt (no API key needed)"
+    2|3)
+      step "tgpt"
       if has_cmd tgpt; then skip
       else
-       
-        local arch; arch=$(uname -m)
-        local tgpt_bin="tgpt-linux-arm64"
-        [[ "$arch" == "x86_64" ]] && tgpt_bin="tgpt-linux-amd64"
-        if curl -sL "https://github.com/aandrew-me/tgpt/releases/latest/download/${tgpt_bin}" \
-             -o "$PREFIX/bin/tgpt" >> "$LOG_FILE" 2>&1; then
-          chmod +x "$PREFIX/bin/tgpt"; ok
-        else
-          fail "tgpt download failed"
-        fi
+        pkg_install "tgpt" || fail "tgpt install failed"
       fi
       ;;
-    5|*)
+    4|*)
       step "AI assistant"; skip; return
       ;;
   esac
 
   echo ""
-  info "Usage examples:"
-  printf "  ${DIM}tgpt 'explain what a for loop is in Python'${R}\n"
-  printf "  ${DIM}tgpt 'fix this error: ...'${R}\n"
-  printf "  ${DIM}sgpt 'write a bash function to backup files'${R}\n"
+  info "Usage:"
+  printf "  ${DIM}tgpt 'explain what a for loop is'${R}\n"
+  printf "  ${DIM}aichat 'fix this error: ...'${R}\n"
 }
 
 
@@ -872,38 +832,61 @@ setup_linux_container() {
   section "Full Linux Dev Container (proot-distro)"
   echo ""
   printf "  ${DIM}Full Linux rootfs inside Termux via proot-distro. No root needed.${R}\n\n"
-  printf "  ${CYAN}[1]${R}  Ubuntu 24.04  ${DIM}-- most compatible, huge package ecosystem${R}\n"
-  printf "  ${CYAN}[2]${R}  Debian 12     ${DIM}-- lighter, very stable${R}\n"
-  printf "  ${CYAN}[3]${R}  Alpine Linux  ${DIM}-- tiny (~8MB), fast, great for containers${R}\n"
-  printf "  ${CYAN}[4]${R}  Arch Linux    ${DIM}-- rolling release, bleeding edge (pacman)${R}\n"
-  printf "  ${CYAN}[5]${R}  skip\n"
-  echo ""
-  ask distro_choice "Your choice" "5"
 
-  local distro_name="" distro_slug=""
-  case "$distro_choice" in
-    1) distro_name="Ubuntu 24.04";  distro_slug="ubuntu"  ;;
-    2) distro_name="Debian 12";     distro_slug="debian"  ;;
-    3) distro_name="Alpine Linux";  distro_slug="alpine"  ;;
-    4) distro_name="Arch Linux";    distro_slug="archlinux" ;;
-    5|*) step "Linux container"; skip; return ;;
-  esac
-
-  # Install proot-distro
+  
   step "proot-distro"
   if pkg_exists "proot-distro"; then skip
   else
     pkg_install "proot-distro"
   fi
 
-  # Install chosen distro
+  #fetch available distro from proot-distro
+  section "Available Distros"
+  printf "  ${DIM}Fetching list from proot-distro...${R}\n\n"
+  local distro_list
+  distro_list=$(proot-distro list 2>/dev/null | grep '^\s*\*' | sed 's/.*\* //' | sed 's/ < / (/' | sed 's/ >/)')
+  if [[ -z "$distro_list" ]]; then
+    printf "  ${RED}Could not fetch distro list.${R}\n"
+    return
+  fi
+
+
+  local names=() slugs=()
+  while IFS= read -r line; do
+    local name slug
+    name=$(echo "$line" | sed 's/ (.*//')
+    slug=$(echo "$line" | grep -oP '\(\K[^)]+')
+    names+=("$name")
+    slugs+=("$slug")
+  done <<< "$distro_list"
+
+  local i
+  for i in "${!names[@]}"; do
+    printf "  ${CYAN}[%2d]${R}  %-30s ${DIM}%s${R}\n" "$((i+1))" "${names[$i]}" "${slugs[$i]}"
+  done
+  echo ""
+  printf "  ${CYAN}[ 0]${R}  skip\n"
+  echo ""
+  ask distro_choice "Your choice" "0"
+
+  if [[ "$distro_choice" == "0" ]] || [[ -z "$distro_choice" ]]; then
+    step "Linux container"; skip; return
+  fi
+
+  local idx=$(( distro_choice - 1 ))
+  if [[ $idx -lt 0 || $idx -ge ${#names[@]} ]]; then
+    printf "  ${RED}Invalid choice.${R}\n"; return
+  fi
+
+  local distro_name="${names[$idx]}"
+  local distro_slug="${slugs[$idx]}"
+
   printf "\n  ${DIM}Installing %s -- downloading rootfs, may take a few minutes...${R}\n\n" "$distro_name"
   step "proot-distro install $distro_slug"
   if proot-distro install "$distro_slug" >> "$LOG_FILE" 2>&1; then
     ok
     state_set "proot:$distro_slug"
   else
-    # Already installed is also fine
     if proot-distro list 2>/dev/null | grep -q "$distro_slug"; then
       skip
     else
@@ -912,11 +895,9 @@ setup_linux_container() {
     fi
   fi
 
- 
   local login_script="$HOME/linux.sh"
   cat > "$login_script" << LOGINSCRIPT
 #!/data/data/com.termux/files/usr/bin/bash
-# Login to $distro_name container
 echo ""
 echo "  Entering $distro_name container..."
 echo "  Type 'exit' to return to Termux."
@@ -930,36 +911,55 @@ LOGINSCRIPT
   step "Login alias: linux"; ok
 
   echo ""
-  info "Enter the container: bash ~/linux.sh  (or just: linux)"
-  printf "  ${DIM}Inside it, run: apt update && apt install -y build-essential${R}\n"
-  printf "  ${DIM}Your Termux home is shared at /root or /home/user${R}\n"
+  info "Enter the container: linux"
+  printf "  ${DIM}Your Termux home is shared inside the container.${R}\n"
 
-  # Offer to bootstrap the container with dev tools
   echo ""
   if confirm "  Auto-install build tools inside $distro_name right now?"; then
     echo ""
-    printf "  ${DIM}Running apt inside container...${R}\n\n"
     case "$distro_slug" in
-      ubuntu|debian)
+      ubuntu|debian|deepin|pardus|trisquel)
         proot-distro login "$distro_slug" -- bash -c \
           "apt-get update -qq && apt-get install -y build-essential git curl wget python3 python3-pip nodejs npm 2>&1" \
           | tee -a "$LOG_FILE" | tail -5
         ;;
-      alpine)
+      alpine|adelie|chimera)
         proot-distro login "$distro_slug" -- sh -c \
           "apk update && apk add build-base git curl wget python3 py3-pip nodejs npm 2>&1" \
           | tee -a "$LOG_FILE" | tail -5
         ;;
-      archlinux)
+      archlinux|manjaro|artix)
         proot-distro login "$distro_slug" -- bash -c \
           "pacman -Syu --noconfirm && pacman -S --noconfirm base-devel git curl wget python python-pip nodejs npm 2>&1" \
           | tee -a "$LOG_FILE" | tail -5
+        ;;
+      fedora|almalinux|rockylinux|oracle)
+        proot-distro login "$distro_slug" -- bash -c \
+          "dnf install -y gcc gcc-c++ make git curl wget python3 python3-pip nodejs npm 2>&1" \
+          | tee -a "$LOG_FILE" | tail -5
+        ;;
+      opensuse)
+        proot-distro login "$distro_slug" -- bash -c \
+          "zypper install -y gcc gcc-c++ make git curl wget python3 python3-pip nodejs npm 2>&1" \
+          | tee -a "$LOG_FILE" | tail -5
+        ;;
+      void)
+        proot-distro login "$distro_slug" -- bash -c \
+          "xbps-install -Sy base-devel git curl wget python3 python3-pip nodejs npm 2>&1" \
+          | tee -a "$LOG_FILE" | tail -5
+        ;;
+      termux)
+        proot-distro login "$distro_slug" -- bash -c \
+          "pkg install -y git curl wget python nodejs 2>&1" \
+          | tee -a "$LOG_FILE" | tail -5
+        ;;
+      *)
+        info "Unknown package manager for $distro_slug -- skipping bootstrap"
         ;;
     esac
     step "Container dev tools bootstrap"; ok
   fi
 }
-
 
 #optional: project scaffolding command
 setup_project_templates() {
@@ -1921,8 +1921,8 @@ show_resources() {
   echo ""
 
   printf "  ${CYAN}${BOLD}Xed Editor${R}  ${DIM}-- clean, fast, markdown + code support${R}\n"
-  printf "  ${YELLOW}  Play Store :${R}  https://play.google.com/store/apps/details?id=com.rhmsoft.edit\n"
-  printf "  ${YELLOW}  F-Droid    :${R}  https://f-droid.org/packages/com.rhmsoft.edit/\n"
+  printf "  ${YELLOW}  GitHub     :${R}  https://github.com/Xed-Editor/Xed-Editor\n"
+  printf "  ${YELLOW}  F-Droid    :${R}  https://f-droid.org/packages/com.rk.xededitor/\n"
   echo ""
 
   printf "  ${CYAN}${BOLD}QuickEdit Pro${R}  ${DIM}-- fast editor, handles huge files well${R}\n"
@@ -1942,11 +1942,6 @@ show_resources() {
   printf "  ${CYAN}${BOLD}Mimo${R}  ${DIM}-- bite-sized lessons, daily streaks${R}\n"
   printf "  ${YELLOW}  Play Store :${R}  https://play.google.com/store/apps/details?id=com.getmimo\n"
   printf "  ${YELLOW}  Website    :${R}  https://getmimo.com\n"
-  echo ""
-
-  printf "  ${CYAN}${BOLD}Grasshopper${R}  ${DIM}-- JS learning app by Google${R}\n"
-  printf "  ${YELLOW}  Play Store :${R}  https://play.google.com/store/apps/details?id=com.area120.grasshopper\n"
-  printf "  ${YELLOW}  Website    :${R}  https://grasshopper.app\n"
   echo ""
 
   printf "  ${CYAN}${BOLD}Programming Hub${R}  ${DIM}-- 20+ languages, offline support, example programs${R}\n"
@@ -2097,9 +2092,8 @@ main() {
   press_enter
 
   
-  section "Power Features"
+  section "Optional Features"
   echo ""
-  printf "  ${DIM}All optional.${R}\n"
   echo ""
   press_enter
 
