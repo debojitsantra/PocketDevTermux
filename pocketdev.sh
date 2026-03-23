@@ -2069,6 +2069,7 @@ main() {
   printf "  ${DIM}Pick profiles, re-run anytime. Already-installed tools are skipped.${R}\n"
   printf "  ${DIM}Log: ~/pocketdev.log${R}\n"
   echo ""
+  termux-setup-storage
   press_enter
 
   # Update
