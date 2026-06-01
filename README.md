@@ -5,7 +5,8 @@
 ![Shell: Bash](https://img.shields.io/badge/Shell-Bash-blue.svg)
 ![Version](https://img.shields.io/badge/Version-3.0-cyan.svg)
 ![No Root](https://img.shields.io/badge/Root-Not%20Required-brightgreen.svg)
-![Maintained](https://img.shields.io/badge/Maintained-Yes-success.svg)
+![Maintenance](https://img.shields.io/badge/maintenance-temporarily_paused-orange)
+<!--![Maintained](https://img.shields.io/badge/Maintained-Yes-success.svg) -->
 
 PocketDevTermux turns [Termux](https://termux.dev)  into a complete mobile development workstation.
 Install programming languages, tools, editors, AI coding assistants, and a full Linux container all from one interactive installer.
