@@ -3,7 +3,7 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 ![Platform: Termux](https://img.shields.io/badge/Platform-Termux-black.svg)
 ![Shell: Bash](https://img.shields.io/badge/Shell-Bash-blue.svg)
-![Version](https://img.shields.io/badge/Version-3.0-cyan.svg)
+![Version](https://img.shields.io/badge/Version-3.2-cyan.svg)
 ![No Root](https://img.shields.io/badge/Root-Not%20Required-brightgreen.svg)
 ![Maintenance](https://img.shields.io/badge/maintenance-temporarily_paused-orange)
 <!--![Maintained](https://img.shields.io/badge/Maintained-Yes-success.svg) -->
