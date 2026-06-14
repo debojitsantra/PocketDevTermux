@@ -1,13 +1,18 @@
 #!/data/data/com.termux/files/usr/bin/bash
+# shellcheck disable=SC2059
 
 set -uo pipefail
 
 #colors and constants
-VERSION="3.0"
+VERSION="3.2"
 LOG_FILE="$HOME/pocketdev.log"
 STATE_FILE="$HOME/.pocketdev_state"
 PROJECTS_DIR="$HOME/projects"
 TERM_WIDTH=$(tput cols 2>/dev/null || echo 72)
+APT_KEEP_CONFIG_OPTS=(
+  -o Dpkg::Options::=--force-confdef
+  -o Dpkg::Options::=--force-confold
+)
 
 #ansi colors
 R='\033[0m'
@@ -20,15 +25,15 @@ BLUE='\033[0;34m'
 MAGENTA='\033[0;35m'
 CYAN='\033[0;36m'
 WHITE='\033[1;37m'
-ORANGE='\033[0;33m'
 
 #logging
 log()  { printf "[%s] %s\n" "$(date '+%H:%M:%S')" "$*" >> "$LOG_FILE"; }
-logn() { printf "[%s] %s" "$(date '+%H:%M:%S')" "$*" >> "$LOG_FILE"; }
+
+# logn() { printf "[%s] %s" "$(date '+%H:%M:%S')" "$*" >> "$LOG_FILE"; }
 
 #state tracking for resume support
 state_set() { grep -qxF "$1" "$STATE_FILE" 2>/dev/null || echo "$1" >> "$STATE_FILE"; }
-state_has() { grep -qxF "$1" "$STATE_FILE" 2>/dev/null; }
+# state_has() { grep -qxF "$1" "$STATE_FILE" 2>/dev/null; }
 
 #ui helpers
 hr() {
@@ -70,7 +75,7 @@ fail()    {
   log "FAIL: $1"
 }
 info()    { printf "  ${BLUE}(i)${R}  %s\n" "$1"; }
-success() { printf "  ${GREEN}${BOLD}(+)${R}  %s\n" "$1"; }
+# success() { printf "  ${GREEN}${BOLD}(+)${R}  %s\n" "$1"; }
 
 ask() {
   local _var="$1" _prompt="$2" _default="${3:-}"
@@ -98,17 +103,17 @@ press_enter() {
   read -r
 }
 
-spinner() {
-  local pid=$1 msg=$2
-  local frames=('.' '..' '...' '    ')
-  local i=0
-  while kill -0 "$pid" 2>/dev/null; do
-    printf "\r  ${CYAN}-->${R}  %-50s${YELLOW}%s${R}" "$msg" "${frames[$((i % 4))]}"
-    sleep 0.4
-    (( i++ )) || true
-  done
-  printf "\r  ${CYAN}-->${R}  %-50s" "$msg"
-}
+# spinner() {
+#   local pid=$1 msg=$2
+#   local frames=('.' '..' '...' '    ')
+#   local i=0
+#   while kill -0 "$pid" 2>/dev/null; do
+#     printf "\r  ${CYAN}-->${R}  %-50s${YELLOW}%s${R}" "$msg" "${frames[$((i % 4))]}"
+#     sleep 0.4
+#     (( i++ )) || true
+#   done
+#   printf "\r  ${CYAN}-->${R}  %-50s" "$msg"
+# }
 
 #package helpers
 has_cmd() { command -v "$1" &>/dev/null; }
@@ -117,7 +122,7 @@ pkg_exists() { dpkg -l "$1" &>/dev/null 2>&1; }
 
 pkg_install() {
   local pkg="$1"
-  local skip_check="${2:-}"  # pass "force" to skip existence check
+  local skip_check="${2:-}"  
 
   if [[ "$skip_check" != "force" ]] && pkg_exists "$pkg"; then
     step "pkg: $pkg (already installed)"; skip
@@ -125,11 +130,12 @@ pkg_install() {
   fi
 
   step "pkg install $pkg"
-  if DEBIAN_FRONTEND=noninteractive pkg install -y "$pkg" >> "$LOG_FILE" 2>&1; then
+  if DEBIAN_FRONTEND=noninteractive pkg install -y "${APT_KEEP_CONFIG_OPTS[@]}" "$pkg" >> "$LOG_FILE" 2>&1; then
     ok
     state_set "pkg:$pkg"
   else
     fail "pkg install $pkg -- see $LOG_FILE"
+    return 1
   fi
 }
 
@@ -146,6 +152,7 @@ pip_install() {
     state_set "pip:$pkg"
   else
     fail "pip install $pkg"
+    return 1
   fi
 }
 
@@ -162,22 +169,143 @@ npm_global() {
     state_set "npm:$pkg"
   else
     fail "npm install -g $pkg"
+    return 1
   fi
 }
 
-cargo_install() {
-  local pkg="$1"
-  local cmd="${2:-$pkg}"
+# cargo_install() {
+#   local pkg="$1"
+#   local cmd="${2:-$pkg}"
+#
+#   step "cargo install: $pkg"
+#   if has_cmd "$cmd"; then
+#     skip; return 0
+#   fi
+#   if cargo install "$pkg" >> "$LOG_FILE" 2>&1; then
+#     ok
+#   else
+#     fail "cargo install $pkg"
+#     return 1
+#   fi
+# }
 
-  step "cargo install: $pkg"
-  if has_cmd "$cmd"; then
-    skip; return 0
+install_pkgs() {
+  local group="$1"
+  shift
+  log "Installing pkg group: $group"
+
+  local pkg
+  for pkg in "$@"; do
+    pkg_install "$pkg"
+  done
+}
+
+install_pips() {
+  local spec pkg import_name
+
+  for spec in "$@"; do
+    pkg="${spec%%:*}"
+    import_name="${spec#*:}"
+    [[ "$import_name" == "$spec" ]] && import_name="$pkg"
+    pip_install "$pkg" "$import_name"
+  done
+}
+
+install_npms() {
+  local spec pkg cmd
+
+  for spec in "$@"; do
+    pkg="${spec%%:*}"
+    cmd="${spec#*:}"
+    [[ "$cmd" == "$spec" ]] && cmd="$pkg"
+    npm_global "$pkg" "$cmd"
+  done
+}
+
+append_once() {
+  local file="$1" marker="$2"
+  local content
+  content="$(cat)"
+
+  if grep -qF "$marker" "$file" 2>/dev/null; then
+    return 0
   fi
-  if cargo install "$pkg" >> "$LOG_FILE" 2>&1; then
-    ok
-  else
-    fail "cargo install $pkg"
-  fi
+
+  printf "\n%s\n" "$content" >> "$file"
+}
+
+write_starter_file() {
+  local path="$1"
+  mkdir -p "$(dirname "$path")"
+  cat > "$path"
+}
+
+proot_distro_installed() {
+  local distro_slug="$1"
+
+  has_cmd proot-distro || return 1
+  proot-distro list 2>/dev/null | awk -v distro="$distro_slug" '
+    $0 ~ distro && $0 ~ /(installed|Installed|\*)/ { found = 1 }
+    END { exit found ? 0 : 1 }
+  '
+}
+
+install_package_menu() {
+  local title="$1" prompt="$2" entries_name="$3"
+  local -n entries_ref="$entries_name"
+  local choice choices entry pkg desc i selected_pkg
+  local all_pkgs=()
+
+  section "$title"
+  echo ""
+  printf "  ${DIM}Pick one or more. Example: 1 2 3 12${R}\n\n"
+
+  for i in "${!entries_ref[@]}"; do
+    IFS='|' read -r pkg desc <<< "${entries_ref[$i]}"
+    all_pkgs+=("$pkg")
+    printf "  ${CYAN}[%2d]${R}  %-16s ${DIM}-- %s${R}\n" "$((i + 1))" "$pkg" "$desc"
+  done
+
+  echo ""
+  printf "  ${CYAN}[99]${R}  all listed packages\n"
+  printf "  ${CYAN}[ 0]${R}  skip\n"
+  echo ""
+  ask choices "$prompt" "0"
+
+  for choice in $choices; do
+    choice="${choice,,}"
+    case "$choice" in
+      0|skip)
+        step "$title"; skip
+        ;;
+      99|all)
+        install_pkgs "$title" "${all_pkgs[@]}"
+        ;;
+      ''|*[!0-9]*)
+        selected_pkg=""
+        for entry in "${entries_ref[@]}"; do
+          IFS='|' read -r pkg desc <<< "$entry"
+          if [[ "$choice" == "$pkg" ]]; then
+            selected_pkg="$pkg"
+            break
+          fi
+        done
+        if [[ -n "$selected_pkg" ]]; then
+          pkg_install "$selected_pkg"
+        else
+          printf "  ${YELLOW}Unknown package option %s -- skipped${R}\n" "$choice"
+        fi
+        ;;
+      *)
+        if (( choice >= 1 && choice <= ${#entries_ref[@]} )); then
+          IFS='|' read -r pkg desc <<< "${entries_ref[$((choice - 1))]}"
+          pkg_install "$pkg"
+        else
+          printf "  ${YELLOW}Unknown package option %s -- skipped${R}\n" "$choice"
+        fi
+        ;;
+    esac
+  done
 }
 
 #profile menu
@@ -188,7 +316,7 @@ show_profiles() {
   printf "  ${DIM}Pick one or more. Example: 1 3 7${R}\n\n"
 
   printf "  ${CYAN}${BOLD}[ 1]${R}  ${WHITE}Python Developer${R}\n"
-  printf "       ${DIM}Python 3, pip, venv, ipython, black, pylint, rich, requests${R}\n\n"
+  printf "       ${DIM}Python 3, pip, venv, black, pylint, rich, requests${R}\n\n"
 
   printf "  ${CYAN}${BOLD}[ 2]${R}  ${WHITE}Web Developer${R}\n"
   printf "       ${DIM}Node.js, npm, live-server, eslint, prettier, nodemon, http-server${R}\n\n"
@@ -214,6 +342,9 @@ show_profiles() {
   printf "  ${CYAN}${BOLD}[ 9]${R}  ${WHITE}Polyglot (Everything)${R}\n"
   printf "       ${DIM}All profiles above combined${R}\n\n"
 
+  printf "  ${CYAN}${BOLD}[ 0]${R}  ${WHITE}Skip profiles${R}\n"
+  printf "       ${DIM}Install only optional sections later in this run${R}\n\n"
+
   hr '-' "$DIM"
 }
 
@@ -228,7 +359,7 @@ install_base() {
 
   if [[ ${#base_pkgs[@]} -gt 0 ]]; then
     step "pkg install ${base_pkgs[*]}"
-    if DEBIAN_FRONTEND=noninteractive pkg install -y "${base_pkgs[@]}" >> "$LOG_FILE" 2>&1; then
+    if DEBIAN_FRONTEND=noninteractive pkg install -y "${APT_KEEP_CONFIG_OPTS[@]}" "${base_pkgs[@]}" >> "$LOG_FILE" 2>&1; then
       ok
       for pkg in "${base_pkgs[@]}"; do state_set "pkg:$pkg"; done
     else
@@ -262,20 +393,18 @@ install_base() {
 #profile: python
 install_python() {
   section "Python Developer"
-  pkg_install python
-  pkg_install python-pip
-
-  pip_install "ipython"
-  pip_install "black"
-  pip_install "pylint"
-  pip_install "requests"
-  pip_install "rich"
-  pip_install "httpx"
-  pip_install "virtualenv"
-  pip_install "python-dotenv" "dotenv"
+  install_pkgs "Python runtime" python python-pip
+  install_pips \
+    black \
+    pylint \
+    requests \
+    rich \
+    httpx \
+    virtualenv \
+    python-dotenv:dotenv
 
   local bashrc="$HOME/.bashrc"
-  grep -q 'mkenv' "$bashrc" 2>/dev/null || cat >> "$bashrc" << 'ALIASES'
+  append_once "$bashrc" "# PocketDev: Python aliases" << 'ALIASES'
 
 # PocketDev: Python aliases
 alias mkenv='python -m venv .venv && source .venv/bin/activate && echo "venv activated"'
@@ -286,8 +415,7 @@ ALIASES
   step "Python shell aliases"; ok
 
   if [[ ! -d "$PROJECTS_DIR/python-starter" ]]; then
-    mkdir -p "$PROJECTS_DIR/python-starter"
-    cat > "$PROJECTS_DIR/python-starter/main.py" << 'EOF'
+    write_starter_file "$PROJECTS_DIR/python-starter/main.py" << 'EOF'
 #!/usr/bin/env python3
 """
 Python Starter Project
@@ -305,7 +433,7 @@ if __name__ == "__main__":
     msg = greet("World")
     console.print(Panel(msg, title="[bold green]Python Starter[/]", border_style="cyan"))
 EOF
-    cat > "$PROJECTS_DIR/python-starter/README.md" << 'EOF'
+    write_starter_file "$PROJECTS_DIR/python-starter/README.md" << 'EOF'
 # Python Starter
 
 Run:
@@ -325,7 +453,7 @@ EOF
 #profile: web
 install_web() {
   section "Web Developer"
-  pkg_install nodejs
+  install_pkgs "Web runtime" nodejs
  
   if ! has_cmd npm; then
     pkg_install "nodejs-lts"
@@ -333,17 +461,17 @@ install_web() {
  
   export PATH="$PREFIX/bin:$PATH"
 
-  npm_global "live-server"
-  npm_global "prettier"
-  npm_global "eslint"
-  npm_global "http-server"
-  npm_global "nodemon"
-  npm_global "typescript" "tsc"
-  npm_global "ts-node"
+  install_npms \
+    live-server \
+    prettier \
+    eslint \
+    http-server \
+    nodemon \
+    typescript:tsc \
+    ts-node
 
   if [[ ! -d "$PROJECTS_DIR/web-starter" ]]; then
-    mkdir -p "$PROJECTS_DIR/web-starter"
-    cat > "$PROJECTS_DIR/web-starter/index.html" << 'EOF'
+    write_starter_file "$PROJECTS_DIR/web-starter/index.html" << 'EOF'
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -367,11 +495,11 @@ install_web() {
 </body>
 </html>
 EOF
-    cat > "$PROJECTS_DIR/web-starter/main.js" << 'EOF'
+    write_starter_file "$PROJECTS_DIR/web-starter/main.js" << 'EOF'
 // Your JavaScript goes here
 console.log("Web environment ready!");
 EOF
-    cat > "$PROJECTS_DIR/web-starter/README.md" << 'EOF'
+    write_starter_file "$PROJECTS_DIR/web-starter/README.md" << 'EOF'
 # Web Starter
 
 Start dev server:
@@ -391,15 +519,12 @@ EOF
 #profile: c/c++
 install_c_cpp() {
   section "C / C++ Developer"
-  for pkg in clang binutils make cmake; do
-    pkg_install "$pkg"
-  done
+  install_pkgs "C and C++ tools" clang binutils make cmake
 
   pkg_install "gdb" || warn "gdb unavailable on this device"
 
   if [[ ! -d "$PROJECTS_DIR/c-starter" ]]; then
-    mkdir -p "$PROJECTS_DIR/c-starter"
-    cat > "$PROJECTS_DIR/c-starter/main.c" << 'EOF'
+    write_starter_file "$PROJECTS_DIR/c-starter/main.c" << 'EOF'
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -409,7 +534,7 @@ int main(int argc, char *argv[]) {
     return EXIT_SUCCESS;
 }
 EOF
-    cat > "$PROJECTS_DIR/c-starter/Makefile" << 'EOF'
+    write_starter_file "$PROJECTS_DIR/c-starter/Makefile" << 'EOF'
 CC      = clang
 CFLAGS  = -Wall -Wextra -std=c17 -g
 TARGET  = hello
@@ -425,7 +550,7 @@ clean:
 run: all
 	./$(TARGET)
 EOF
-    cat > "$PROJECTS_DIR/c-starter/README.md" << 'EOF'
+    write_starter_file "$PROJECTS_DIR/c-starter/README.md" << 'EOF'
 # C Starter
 
 Build and run:
@@ -445,13 +570,11 @@ EOF
 #profile: java
 install_java() {
   section "Java Developer"
-  pkg_install "openjdk-17"
-  pkg_install "gradle"
+  install_pkgs "Java tools" openjdk-17 gradle
   pkg_install "maven" || warn "maven unavailable, use gradle"
 
   if [[ ! -d "$PROJECTS_DIR/java-starter" ]]; then
-    mkdir -p "$PROJECTS_DIR/java-starter/src"
-    cat > "$PROJECTS_DIR/java-starter/src/Main.java" << 'EOF'
+    write_starter_file "$PROJECTS_DIR/java-starter/src/Main.java" << 'EOF'
 public class Main {
     public static void main(String[] args) {
         String name = args.length > 0 ? args[0] : "World";
@@ -459,7 +582,7 @@ public class Main {
     }
 }
 EOF
-    cat > "$PROJECTS_DIR/java-starter/README.md" << 'EOF'
+    write_starter_file "$PROJECTS_DIR/java-starter/README.md" << 'EOF'
 # Java Starter
 
 Compile and run:
@@ -476,18 +599,16 @@ EOF
 #profile: kotlin
 install_kotlin() {
   section "Kotlin Developer"
-  pkg_install "openjdk-17"
-  pkg_install "kotlin"
+  install_pkgs "Kotlin tools" openjdk-17 kotlin
 
   if [[ ! -d "$PROJECTS_DIR/kotlin-starter" ]]; then
-    mkdir -p "$PROJECTS_DIR/kotlin-starter"
-    cat > "$PROJECTS_DIR/kotlin-starter/main.kt" << 'EOF'
+    write_starter_file "$PROJECTS_DIR/kotlin-starter/main.kt" << 'EOF'
 fun main(args: Array<String>) {
     val name = if (args.isNotEmpty()) args[0] else "World"
     println("Hello, $name! Kotlin environment is ready.")
 }
 EOF
-    cat > "$PROJECTS_DIR/kotlin-starter/README.md" << 'EOF'
+    write_starter_file "$PROJECTS_DIR/kotlin-starter/README.md" << 'EOF'
 # Kotlin Starter
 
 Compile and run:
@@ -509,13 +630,14 @@ install_rust() {
   else
     
     step "rust"
-    if DEBIAN_FRONTEND=noninteractive pkg install -y rust >> "$LOG_FILE" 2>&1; then
+    if DEBIAN_FRONTEND=noninteractive pkg install -y "${APT_KEEP_CONFIG_OPTS[@]}" rust >> "$LOG_FILE" 2>&1; then
       ok
       state_set "pkg:rust"
       
       
-      grep -q '.cargo/bin' "$HOME/.bashrc" || \
-        echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$HOME/.bashrc"
+      append_once "$HOME/.bashrc" '.cargo/bin' << 'EOF'
+export PATH="$HOME/.cargo/bin:$PATH"
+EOF
       export PATH="$HOME/.cargo/bin:$PATH"
     else
       fail "pkg install rust failed -- check $LOG_FILE"
@@ -526,7 +648,11 @@ install_rust() {
   if [[ ! -d "$PROJECTS_DIR/rust-starter" ]]; then
     if has_cmd cargo; then
       step "rust starter project"
-      cargo new "$PROJECTS_DIR/rust-starter" --name hello >> "$LOG_FILE" 2>&1 && ok || fail "cargo new failed"
+      if cargo new "$PROJECTS_DIR/rust-starter" --name hello >> "$LOG_FILE" 2>&1; then
+        ok
+      else
+        fail "cargo new failed"
+      fi
     fi
   else
     step "rust starter project"; skip
@@ -536,13 +662,11 @@ install_rust() {
 #profile: devops/shell
 install_devops() {
   section "DevOps / Shell Scripting"
-  for pkg in zsh tmux jq bc shellcheck ripgrep fd bat lsd; do
-    pkg_install "$pkg"
-  done
+  install_pkgs "DevOps and shell tools" zsh tmux jq bc shellcheck ripgrep fd bat lsd
 
   # tmux config
   if [[ ! -f "$HOME/.tmux.conf" ]]; then
-    cat > "$HOME/.tmux.conf" << 'EOF'
+    write_starter_file "$HOME/.tmux.conf" << 'EOF'
 # PocketDev tmux config
 set -g mouse on
 set -g history-limit 10000
@@ -581,10 +705,10 @@ EOF
 #profile: go
 install_go() {
   section "Go Developer"
-  pkg_install "golang"
+  install_pkgs "Go tools" golang
 
   local bashrc="$HOME/.bashrc"
-  grep -q 'GOPATH' "$bashrc" || cat >> "$bashrc" << 'GOENV'
+  append_once "$bashrc" "# PocketDev: Go environment" << 'GOENV'
 
 # PocketDev: Go environment
 export GOPATH="$HOME/go"
@@ -596,12 +720,15 @@ GOENV
 
   if has_cmd go; then
     step "air (hot reload)"
-    go install github.com/air-verse/air@latest >> "$LOG_FILE" 2>&1 && ok || warn "air install failed"
+    if go install github.com/air-verse/air@latest >> "$LOG_FILE" 2>&1; then
+      ok
+    else
+      warn "air install failed"
+    fi
   fi
 
   if [[ ! -d "$PROJECTS_DIR/go-starter" ]]; then
-    mkdir -p "$PROJECTS_DIR/go-starter"
-    cat > "$PROJECTS_DIR/go-starter/main.go" << 'EOF'
+    write_starter_file "$PROJECTS_DIR/go-starter/main.go" << 'EOF'
 package main
 
 import (
@@ -617,12 +744,12 @@ func main() {
 	fmt.Printf("Hello, %s! Go environment is ready.\n", name)
 }
 EOF
-    cat > "$PROJECTS_DIR/go-starter/go.mod" << 'EOF'
+    write_starter_file "$PROJECTS_DIR/go-starter/go.mod" << 'EOF'
 module hello
 
 go 1.21
 EOF
-    cat > "$PROJECTS_DIR/go-starter/README.md" << 'EOF'
+    write_starter_file "$PROJECTS_DIR/go-starter/README.md" << 'EOF'
 # Go Starter
 
 Run:
@@ -652,40 +779,217 @@ install_polyglot() {
   install_go
 }
 
+install_jellyfin_server() {
+  install_pkgs "Jellyfin runtime" dotnet-runtime-9.0 aspnetcore-runtime-9.0
+  append_once "$HOME/.bashrc" "DOTNET_ROOT=" << 'EOF'
+export DOTNET_ROOT="$PREFIX/lib/dotnet"
+export PATH="$PATH:$PREFIX/bin"
+EOF
+  export DOTNET_ROOT="$PREFIX/lib/dotnet"
+  export PATH="$PATH:$PREFIX/bin"
+  pkg_install "jellyfin-server"
+}
+
+bootstrap_container_tools() {
+  local distro_slug="$1" shell_bin="$2" bootstrap_cmd="$3"
+  local bootstrap_log
+
+  bootstrap_log=$(mktemp "${TMPDIR:-/tmp}/pocketdev-proot-bootstrap.XXXXXX")
+  step "Container dev tools bootstrap"
+  if proot-distro login "$distro_slug" -- "$shell_bin" -c "$bootstrap_cmd" > "$bootstrap_log" 2>&1; then
+    cat "$bootstrap_log" >> "$LOG_FILE"
+    ok
+  else
+    cat "$bootstrap_log" >> "$LOG_FILE"
+    fail "container bootstrap failed -- see $LOG_FILE"
+    tail -10 "$bootstrap_log" 2>/dev/null || true
+  fi
+  rm -f "$bootstrap_log"
+}
+
+install_server() {
+  section "Media and File Servers"
+  local choice server_choices
+  echo ""
+  printf "  ${DIM}Pick one or more. Example: 1 3${R}\n\n"
+  printf "  ${CYAN}[ 1]${R}  jellyfin   ${DIM}-- media server${R}\n"
+  printf "  ${CYAN}[ 2]${R}  navidrome  ${DIM}-- music server${R}\n"
+  printf "  ${CYAN}[ 3]${R}  sftpgo     ${DIM}-- SFTP/WebDAV server${R}\n"
+  printf "  ${CYAN}[ 4]${R}  seanime    ${DIM}-- anime media manager${R}\n"
+  printf "  ${CYAN}[99]${R}  all listed packages\n"
+  printf "  ${CYAN}[ 0]${R}  skip\n"
+  echo ""
+  ask server_choices "Server number(s)" "0"
+
+  for choice in $server_choices; do
+    choice="${choice,,}"
+    case "$choice" in
+      1|jellyfin) install_jellyfin_server ;;
+      2|navidrome) pkg_install "navidrome" ;;
+      3|sftpgo) pkg_install "sftpgo" ;;
+      4|seanime) pkg_install "seanime" ;;
+      99|all)
+        install_jellyfin_server
+        install_pkgs "Media and file servers" navidrome sftpgo seanime
+        ;;
+      0|skip) step "server packages"; skip ;;
+      *) printf "  ${YELLOW}Unknown server option %s -- skipped${R}\n" "$choice" ;;
+    esac
+  done
+
+  echo ""
+  info "Start commands:"
+  printf "  ${DIM}jellyfin, navidrome, sftpgo, seanime${R}\n"
+}
+
+setup_web_servers() {
+  local web_server_packages=(
+    "nginx|fast reverse proxy and static web server"
+    "apache2|classic full-featured HTTP server"
+  )
+  install_package_menu "Web Servers" "Web server number(s)" web_server_packages
+  info "Start commands vary by package; check each package's Termux notes after install."
+}
+
+setup_databases() {
+  local database_packages=(
+    "postgresql|advanced relational database server"
+    "mariadb|MySQL-compatible relational database"
+    "redis|in-memory key-value store and cache"
+    "sqlite|small file-based SQL database"
+  )
+  install_package_menu "Databases" "Database number(s)" database_packages
+}
+
+setup_more_languages_tools() {
+  local more_tool_packages=(
+    "brainfuck|minimal esoteric programming language"
+    "zig|modern systems programming language"
+    "nim|compiled language with Python-like syntax"
+    "crystal|Ruby-like compiled programming language"
+    "deno|secure JavaScript and TypeScript runtime"
+    "elixir|functional language on the Erlang VM"
+    "tcc|tiny C compiler for quick builds"
+    "gdb|GNU debugger"
+    "gdbserver|remote debugging server for gdb"
+    "lldb|LLVM debugger"
+    "hyperfine|command-line benchmarking tool"
+    "shellcheck|shell script static analyzer"
+    "shfmt|shell script formatter"
+    "ruff|fast Python linter and formatter"
+    "tokei|code line counter"
+    "ctags|source code tag generator"
+    "indent|C source formatter"
+    "nasm|Netwide assembler"
+    "yasm|modular x86 assembler"
+    "xxd|hex dump and reverse hex dump tool"
+  )
+  install_package_menu "More Languages & Tools" "Tool number(s)" more_tool_packages
+}
+
+setup_fun_tools() {
+  section "Open Fun Tools"
+  local fun_tool_packages=(
+    "2048-c|classic 2048 puzzle"
+    "bastet|Tetris variant that gives difficult pieces"
+    "vitetris|terminal Tetris game"
+    "nethack|classic roguelike dungeon crawler"
+    "brogue|modern roguelike dungeon crawler"
+    "angband|classic fantasy roguelike"
+    "nsnake|terminal snake game"
+    "ninvaders|Space Invaders in the terminal"
+    "pacman4console|Pac-Man style terminal game"
+    "moon-buggy|drive and jump over craters"
+    "cavez-of-phear|Boulder Dash style terminal game"
+    "greed|number-eating terminal game"
+    "tty-solitaire|Klondike solitaire in terminal"
+    "nudoku|terminal Sudoku"
+    "bsd-games|collection of classic command-line games"
+    "robotfindskitten|quirky terminal exploration game"
+    "cmatrix|Matrix-style falling code"
+    "cbonsai|animated terminal bonsai tree"
+    "pipes.sh|animated flowing terminal pipes"
+    "nyancat|Nyan Cat animation in terminal"
+    "hollywood|fake hacker movie terminal dashboard"
+    "no-more-secrets|movie-style text decryption effect"
+    "cava|terminal audio visualizer"
+    "tty-clock|large terminal clock"
+    "chafa|display images and GIFs in terminal"
+    "catimg|simple terminal image display"
+    "viu|terminal image viewer with color"
+    "aview|ASCII art image viewer"
+    "aalib|ASCII art rendering library and tools"
+    "figlet|large ASCII art text"
+    "toilet|colorful FIGlet-style text"
+    "boxes|draw boxes around text"
+    "cowsay|speech bubbles from terminal characters"
+    "fortune|random quotes and jokes"
+    "neofetch|system info with ASCII art"
+    "fastfetch|fast system info summary"
+    "onefetch|git repository stats with ASCII art"
+    "wtfutil|terminal personal dashboard"
+    "cmus|terminal music player"
+    "mpd|music player daemon"
+    "ncmpcpp|terminal client for mpd"
+    "asciinema|record terminal sessions"
+    "ttyper|terminal typing speed test"
+  )
+
+  echo ""
+  if ! confirm "  Show optional fun tools menu?"; then
+    step "fun tools"; skip
+    return
+  fi
+
+  install_package_menu "Fun Tools" "Fun tool number(s)" fun_tool_packages
+}
+
 
 #editor selection
 setup_editor() {
   section "Code Editor"
+  local editor_choice editor_choices
   echo ""
   printf "  ${CYAN}[1]${R}  micro   ${DIM}-- Ctrl+S save, Ctrl+Q quit${R}\n"
   printf "  ${CYAN}[2]${R}  nano    ${DIM}-- simple, no config needed${R}\n"
   printf "  ${CYAN}[3]${R}  helix   ${DIM}-- modern modal editor, built-in LSP${R}\n"
   printf "  ${CYAN}[4]${R}  vim     ${DIM}-- classic, fast, powerful${R}\n"
   printf "  ${CYAN}[5]${R}  neovim  ${DIM}-- modern vim (Lua config)${R}\n"
-  printf "  ${CYAN}[6]${R}  skip\n"
+  printf "  ${CYAN}[6]${R}  emacs   ${DIM}-- extensible editor environment${R}\n"
+  printf "  ${CYAN}[7]${R}  skip\n"
   echo ""
-  ask editor_choice "Your choice" "1"
+  ask editor_choices "Editor number(s)" "1"
 
   local bashrc="$HOME/.bashrc"
 
-  case "$editor_choice" in
-    1)
-      pkg_install "micro"
-      grep -q 'EDITOR=micro' "$bashrc" || echo 'export EDITOR=micro' >> "$bashrc"
-      ;;
-    2)
-      pkg_install "nano"
-      grep -q 'EDITOR=nano' "$bashrc" || echo 'export EDITOR=nano' >> "$bashrc"
-      ;;
-    3)
-      pkg_install "helix"
-      grep -q 'EDITOR=hx' "$bashrc" || echo 'export EDITOR=hx' >> "$bashrc"
-      ;;
-    4)
-      pkg_install "vim"
-      grep -q 'EDITOR=vim' "$bashrc" || echo 'export EDITOR=vim' >> "$bashrc"
-      # Minimal .vimrc
-      [[ -f "$HOME/.vimrc" ]] || cat > "$HOME/.vimrc" << 'EOF'
+  for editor_choice in $editor_choices; do
+    editor_choice="${editor_choice,,}"
+    case "$editor_choice" in
+      1|micro)
+        pkg_install "micro"
+        append_once "$bashrc" "EDITOR=micro" << 'EOF'
+export EDITOR=micro
+EOF
+        ;;
+      2|nano)
+        pkg_install "nano"
+        append_once "$bashrc" "EDITOR=nano" << 'EOF'
+export EDITOR=nano
+EOF
+        ;;
+      3|helix|hx)
+        pkg_install "helix"
+        append_once "$bashrc" "EDITOR=hx" << 'EOF'
+export EDITOR=hx
+EOF
+        ;;
+      4|vim)
+        pkg_install "vim"
+        append_once "$bashrc" "EDITOR=vim" << 'EOF'
+export EDITOR=vim
+EOF
+        # Minimal .vimrc
+        [[ -f "$HOME/.vimrc" ]] || write_starter_file "$HOME/.vimrc" << 'EOF'
 syntax on
 set number
 set tabstop=4
@@ -695,48 +999,89 @@ set autoindent
 set mouse=a
 set clipboard=unnamedplus
 EOF
-      step ".vimrc created"; ok
-      ;;
-    5)
-      pkg_install "neovim"
-      grep -q 'EDITOR=nvim' "$bashrc" || echo 'export EDITOR=nvim' >> "$bashrc"
-      grep -q 'alias vim=nvim' "$bashrc" || echo 'alias vim=nvim' >> "$bashrc"
-      ;;
-    6|*)
-      step "editor"; skip
-      ;;
-  esac
+        step ".vimrc created"; ok
+        ;;
+      5|neovim|nvim)
+        pkg_install "neovim"
+        append_once "$bashrc" "EDITOR=nvim" << 'EOF'
+export EDITOR=nvim
+EOF
+        append_once "$bashrc" "alias vim=nvim" << 'EOF'
+alias vim=nvim
+EOF
+        ;;
+      6|emacs)
+        pkg_install "emacs"
+        append_once "$bashrc" "EDITOR=emacs" << 'EOF'
+export EDITOR=emacs
+EOF
+        ;;
+      7|0|skip)
+        step "editor"; skip
+        ;;
+      *)
+        printf "  ${YELLOW}Unknown editor option %s -- skipped${R}\n" "$editor_choice"
+        ;;
+    esac
+  done
 }
 
 
 #optional extras
 setup_extras() {
   section "Optional Extras"
+  local choice extra_choices
   echo ""
+  printf "  ${DIM}Pick one or more. Example: 1 2${R}\n\n"
+  printf "  ${CYAN}[ 1]${R}  fzf  ${DIM}-- fuzzy history search and file finder${R}\n"
+  printf "  ${CYAN}[ 2]${R}  gh   ${DIM}-- GitHub command-line client${R}\n"
+  printf "  ${CYAN}[ 3]${R}  nnn  ${DIM}-- terminal file manager${R}\n"
+  printf "  ${CYAN}[99]${R}  all listed packages\n"
+  printf "  ${CYAN}[ 0]${R}  skip\n"
+  echo ""
+  ask extra_choices "Extra package number(s)" "0"
 
-  if confirm "  Install fzf (fuzzy history search / file finder)?"; then
-    pkg_install "fzf"
-    grep -q 'fzf' "$HOME/.bashrc" || cat >> "$HOME/.bashrc" << 'EOF'
+  install_fzf_extra() {
+    pkg_install "fzf" || return 1
+    append_once "$HOME/.bashrc" "# PocketDev: fzf" << 'FZFEOF'
 
 # PocketDev: fzf
 [ -f ~/.fzf.bash ] && source ~/.fzf.bash
 export FZF_DEFAULT_OPTS='--height 40% --layout=reverse --border'
-EOF
+FZFEOF
     step "fzf shell integration"; ok
-  fi
+  }
 
-  if confirm "  Install GitHub CLI (gh)?"; then
+  install_gh_extra() {
     pkg_install "gh"
-  fi
+  }
 
-  if confirm "  Install nnn (terminal file manager)?"; then
-    pkg_install "nnn"
-    grep -q 'alias n=' "$HOME/.bashrc" || echo "alias n='nnn -de'" >> "$HOME/.bashrc"
-  fi
+  install_nnn_extra() {
+    pkg_install "nnn" || return 1
+    append_once "$HOME/.bashrc" "alias n=" << 'NNNEOF'
+alias n='nnn -de'
+NNNEOF
+  }
+
+  for choice in $extra_choices; do
+    choice="${choice,,}"
+    case "$choice" in
+      1|fzf) install_fzf_extra ;;
+      2|gh) install_gh_extra ;;
+      3|nnn) install_nnn_extra ;;
+      99|all)
+        install_fzf_extra
+        install_gh_extra
+        install_nnn_extra
+        ;;
+      0|skip) step "optional extras"; skip ;;
+      *) printf "  ${YELLOW}Unknown extra option %s -- skipped${R}\n" "$choice" ;;
+    esac
+  done
 
   # Shell polish
   local bashrc="$HOME/.bashrc"
-  grep -q '# PocketDev: QoL aliases' "$bashrc" || cat >> "$bashrc" << 'QOLALIASES'
+  append_once "$bashrc" "# PocketDev: QoL aliases" << 'QOLALIASES'
 
 # PocketDev: QoL aliases
 alias ll='ls -lah --color=auto'
@@ -792,33 +1137,29 @@ print_version_table() {
 #optional: ai coding assistant
 setup_ai_assistant() {
   section "AI Coding Assistant"
+  local ai_choice ai_choices
   echo ""
-  printf "  ${CYAN}[1]${R}  aichat \n" 
-  printf "  ${CYAN}[2]${R}  tgpt \n"   
-  printf "  ${CYAN}[3]${R}  both \n"
-  printf "  ${CYAN}[4]${R}  skip\n"
+  printf "  ${DIM}Pick one or more. Example: 1 2${R}\n\n"
+  printf "  ${CYAN}[ 1]${R}  aichat  ${DIM}-- multi-provider AI chat CLI${R}\n"
+  printf "  ${CYAN}[ 2]${R}  tgpt    ${DIM}-- lightweight terminal AI helper${R}\n"
+  printf "  ${CYAN}[99]${R}  all listed packages\n"
+  printf "  ${CYAN}[ 0]${R}  skip\n"
   echo ""
-  ask ai_choice "Your choice" "4"
+  ask ai_choices "AI package number(s)" "0"
 
-  case "$ai_choice" in
-    1|3)
-      step "aichat"
-      if has_cmd aichat; then skip
-      else
+  for ai_choice in $ai_choices; do
+    ai_choice="${ai_choice,,}"
+    case "$ai_choice" in
+      1|aichat) pkg_install "aichat" || fail "aichat unavailable" ;;
+      2|tgpt) pkg_install "tgpt" || fail "tgpt install failed" ;;
+      99|all)
         pkg_install "aichat" || fail "aichat unavailable"
-      fi
-      ;;&
-    2|3)
-      step "tgpt"
-      if has_cmd tgpt; then skip
-      else
         pkg_install "tgpt" || fail "tgpt install failed"
-      fi
-      ;;
-    4|*)
-      step "AI assistant"; skip; return
-      ;;
-  esac
+        ;;
+      0|skip) step "AI assistant"; skip; return ;;
+      *) printf "  ${YELLOW}Unknown AI option %s -- skipped${R}\n" "$ai_choice" ;;
+    esac
+  done
 
   echo ""
   info "Usage:"
@@ -830,79 +1171,80 @@ setup_ai_assistant() {
 #optional: full linux container via proot-distro
 setup_linux_container() {
   section "Full Linux Dev Container (proot-distro)"
-  echo ""
-  printf "  ${DIM}Full Linux rootfs inside Termux via proot-distro. No root needed.${R}\n\n"
+  local i distro_choice distro_name distro_slug idx
+  local names=()
+  local slugs=()
 
-  step "proot-distro"
-  if pkg_exists "proot-distro"; then skip
-  else
-    pkg_install "proot-distro"
+  echo ""
+  printf "  ${DIM}Install a full Linux rootfs inside Termux. No root needed.${R}\n\n"
+  if ! confirm "  Show Linux distro install menu?"; then
+    step "Linux container"; skip
+    return
   fi
 
-  #hardcoded distro list matching current proot-distro supported distros
-  local names=(
-    "Adélie Linux"
-    "AlmaLinux"
-    "Alpine Linux"
-    "Arch Linux"
-    "Artix Linux"
-    "Chimera Linux"
-    "Debian (trixie)"
-    "Deepin"
-    "Fedora"
-    "Manjaro"
-    "OpenSUSE"
-    "Oracle Linux"
-    "Pardus"
-    "Rocky Linux"
-    "Termux"
-    "Trisquel GNU/Linux"
-    "Ubuntu (25.10)"
-    "Void Linux"
-  )
-  local slugs=(
-    "adelie"
-    "almalinux"
-    "alpine"
-    "archlinux"
-    "artix"
-    "chimera"
-    "debian"
-    "deepin"
-    "fedora"
-    "manjaro"
-    "opensuse"
-    "oracle"
-    "pardus"
-    "rockylinux"
-    "termux"
-    "trisquel"
-    "ubuntu"
-    "void"
+  step "proot-distro"
+  if pkg_exists "proot-distro"; then
+    ok
+  else
+    pkg_install "proot-distro" || return
+  fi
+
+  while IFS= read -r distro_slug; do
+    [[ -n "$distro_slug" ]] || continue
+    slugs+=("$distro_slug")
+    names+=("$distro_slug")
+  done < <(
+    proot-distro list 2>/dev/null |
+      awk '
+        /^[[:space:]]*[*-][[:space:]]/ { print $2; next }
+        /^[[:space:]]*[a-z0-9][a-z0-9_-]+[[:space:]]*$/ { print $1; next }
+        /^[[:space:]]*[a-z0-9][a-z0-9_-]+[[:space:]]+.*$/ && $1 !~ /^(Installed|Available|Alias|Status)$/ { print $1 }
+      '
   )
 
-  section "Available Distros"
+  if [[ ${#slugs[@]} -eq 0 ]]; then
+    names=(
+      "Alpine Linux"
+      "Arch Linux"
+      "Debian"
+      "Fedora"
+      "OpenSUSE"
+      "Ubuntu"
+      "Void Linux"
+    )
+    slugs=(
+      "alpine"
+      "archlinux"
+      "debian"
+      "fedora"
+      "opensuse"
+      "ubuntu"
+      "void"
+    )
+  fi
+
   echo ""
-  local i
+  printf "  ${MAGENTA}${BOLD}Available Distros${R}\n"
+  printf "  ${DIM}Pick one distro. Example: 6${R}\n\n"
   for i in "${!names[@]}"; do
-    printf "  ${CYAN}[%2d]${R}  %-30s ${DIM}%s${R}\n" "$((i+1))" "${names[$i]}" "${slugs[$i]}"
+    printf "  ${CYAN}[%2d]${R}  %-24s ${DIM}-- %s${R}\n" "$((i + 1))" "${names[$i]}" "${slugs[$i]}"
   done
   echo ""
   printf "  ${CYAN}[ 0]${R}  skip\n"
   echo ""
-  ask distro_choice "Your choice" "0"
+  ask distro_choice "Distro number" "0"
 
   if [[ "$distro_choice" == "0" ]] || [[ -z "$distro_choice" ]]; then
     step "Linux container"; skip; return
   fi
 
-  local idx=$(( distro_choice - 1 ))
+  idx=$(( distro_choice - 1 ))
   if [[ $idx -lt 0 || $idx -ge ${#names[@]} ]]; then
     printf "  ${RED}Invalid choice.${R}\n"; return
   fi
 
-  local distro_name="${names[$idx]}"
-  local distro_slug="${slugs[$idx]}"
+  distro_name="${names[$idx]}"
+  distro_slug="${slugs[$idx]}"
 
   printf "\n  ${DIM}Installing %s -- downloading rootfs, may take a few minutes...${R}\n\n" "$distro_name"
   step "proot-distro install $distro_slug"
@@ -911,7 +1253,7 @@ setup_linux_container() {
     state_set "proot:$distro_slug"
   else
     #already installed counts as success
-    if proot-distro list 2>/dev/null | grep -q "$distro_slug"; then
+    if proot_distro_installed "$distro_slug"; then
       skip
     else
       fail "proot-distro install $distro_slug failed"
@@ -920,7 +1262,7 @@ setup_linux_container() {
   fi
 
   local login_script="$HOME/linux.sh"
-  cat > "$login_script" << LOGINSCRIPT
+  write_starter_file "$login_script" << LOGINSCRIPT
 #!/data/data/com.termux/files/usr/bin/bash
 echo ""
 echo "  Entering $distro_name container..."
@@ -930,8 +1272,9 @@ proot-distro login $distro_slug --shared-tmp
 LOGINSCRIPT
   chmod +x "$login_script"
 
-  grep -q 'alias linux=' "$HOME/.bashrc" || \
-    echo "alias linux='bash ~/linux.sh'" >> "$HOME/.bashrc"
+  append_once "$HOME/.bashrc" "alias linux=" << 'EOF'
+alias linux='bash ~/linux.sh'
+EOF
   step "Login alias: linux"; ok
 
   echo ""
@@ -943,49 +1286,41 @@ LOGINSCRIPT
     echo ""
     case "$distro_slug" in
       ubuntu|debian|deepin|pardus|trisquel)
-        proot-distro login "$distro_slug" -- bash -c \
-          "apt-get update -qq && apt-get install -y build-essential git curl wget python3 python3-pip nodejs npm 2>&1" \
-          | tee -a "$LOG_FILE" | tail -5
+        bootstrap_container_tools "$distro_slug" bash \
+          "DEBIAN_FRONTEND=noninteractive apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold build-essential git curl wget python3 python3-pip nodejs npm"
         ;;
       alpine|adelie|chimera)
-        proot-distro login "$distro_slug" -- sh -c \
-          "apk update && apk add build-base git curl wget python3 py3-pip nodejs npm 2>&1" \
-          | tee -a "$LOG_FILE" | tail -5
+        bootstrap_container_tools "$distro_slug" sh \
+          "apk update && apk add build-base git curl wget python3 py3-pip nodejs npm"
         ;;
       archlinux|manjaro|artix)
-        proot-distro login "$distro_slug" -- bash -c \
-          "pacman -Syu --noconfirm && pacman -S --noconfirm base-devel git curl wget python python-pip nodejs npm 2>&1" \
-          | tee -a "$LOG_FILE" | tail -5
+        bootstrap_container_tools "$distro_slug" bash \
+          "pacman -Syu --noconfirm && pacman -S --noconfirm base-devel git curl wget python python-pip nodejs npm"
         ;;
       fedora|almalinux|rockylinux|oracle)
-        proot-distro login "$distro_slug" -- bash -c \
-          "dnf install -y gcc gcc-c++ make git curl wget python3 python3-pip nodejs npm 2>&1" \
-          | tee -a "$LOG_FILE" | tail -5
+        bootstrap_container_tools "$distro_slug" bash \
+          "dnf install -y gcc gcc-c++ make git curl wget python3 python3-pip nodejs npm"
         ;;
       opensuse)
-        proot-distro login "$distro_slug" -- bash -c \
-          "zypper install -y gcc gcc-c++ make git curl wget python3 python3-pip nodejs npm 2>&1" \
-          | tee -a "$LOG_FILE" | tail -5
+        bootstrap_container_tools "$distro_slug" bash \
+          "zypper install -y gcc gcc-c++ make git curl wget python3 python3-pip nodejs npm"
         ;;
       void)
-        proot-distro login "$distro_slug" -- bash -c \
-          "xbps-install -Sy base-devel git curl wget python3 python3-pip nodejs npm 2>&1" \
-          | tee -a "$LOG_FILE" | tail -5
+        bootstrap_container_tools "$distro_slug" bash \
+          "xbps-install -Sy base-devel git curl wget python3 python3-pip nodejs npm"
         ;;
       termux)
-        proot-distro login "$distro_slug" -- bash -c \
-          "pkg install -y git curl wget python nodejs 2>&1" \
-          | tee -a "$LOG_FILE" | tail -5
+        bootstrap_container_tools "$distro_slug" bash \
+          "pkg install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold git curl wget python nodejs"
         ;;
       *)
         info "Unknown package manager for $distro_slug -- skipping bootstrap"
         ;;
     esac
-    step "Container dev tools bootstrap"; ok
   fi
 }
 
-#optional: project scaffolding command
+
 setup_project_templates() {
   section "Automatic Project Templates"
   echo ""
@@ -995,8 +1330,13 @@ setup_project_templates() {
     step "project templates"; skip; return
   fi
 
+  install_newproject_command
+}
+
+install_newproject_command() {
   local bin_path="$PREFIX/bin/newproject"
 
+  # Embedded payload for the installed `newproject` command.
   cat > "$bin_path" << 'NEWPROJECT'
 #!/data/data/com.termux/files/usr/bin/bash
 # newproject -- scaffold a new project from a template
@@ -1623,7 +1963,6 @@ print("python core ok")
 PYEOF
     t  "python core"            "python $TEST_DIR/test_python.py"
     t  "pip version"            "pip --version"
-    tc "ipython" "ipython version"    "ipython --version"
     tc "black"   "black check"        "black --version"
     tc "pylint"  "pylint version"     "pylint --version"
 
@@ -2075,7 +2414,7 @@ main() {
   printf "  ${DIM}Log: ~/pocketdev.log${R}\n"
   echo ""
 
-  if [ -d "$HOME/storage"]; then
+  if [ -d "$HOME/storage" ]; then
     echo "Storage already setup."
   else
     termux-setup-storage
@@ -2088,7 +2427,7 @@ main() {
   step "pkg update"
   if pkg update -y >> "$LOG_FILE" 2>&1; then ok; else fail "pkg update failed"; fi
   step "pkg upgrade"
-  if pkg upgrade -y >> "$LOG_FILE" 2>&1; then ok; else fail "pkg upgrade failed"; fi
+  if DEBIAN_FRONTEND=noninteractive pkg upgrade -y "${APT_KEEP_CONFIG_OPTS[@]}" >> "$LOG_FILE" 2>&1; then ok; else fail "pkg upgrade failed"; fi
   press_enter
 
   # Base
@@ -2097,13 +2436,15 @@ main() {
 
   # Profile selection
   show_profiles
-  ask profiles "Enter profile number(s)" "1"
+  local profiles
+  ask profiles "Enter profile number(s)" "0"
 
   echo ""
 
   # Process each chosen profile
   for p in $profiles; do
     case "$p" in
+      0)  step "developer profiles"; skip ;;
       1)  install_python      ;;
       2)  install_web         ;;
       3)  install_c_cpp       ;;
@@ -2121,16 +2462,13 @@ main() {
   printf "  ${GREEN}Profile installation done!${R}\n"
   press_enter
 
+  setup_more_languages_tools
+  press_enter
+
   setup_editor
   press_enter
 
   setup_extras
-  press_enter
-
-  
-  section "Optional Features"
-  echo ""
-  echo ""
   press_enter
 
   setup_ai_assistant
@@ -2139,7 +2477,19 @@ main() {
   setup_linux_container
   press_enter
 
+  install_server
+  press_enter
+
+  setup_web_servers
+  press_enter
+
+  setup_databases
+  press_enter
+
   setup_project_templates
+  press_enter
+
+  setup_fun_tools
   press_enter
 
   show_resources

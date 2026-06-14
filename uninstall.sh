@@ -68,9 +68,23 @@ remove_pkgs() {
           openjdk-17 gradle maven kotlin golang rust
           zsh tmux jq shellcheck ripgrep fd bat lsd
           fzf gh nnn micro helix neovim vim
+          emacs
           proot-distro tur-repo
           build-essential pkg-config patchelf libzmq
           aichat tgpt
+          dotnet-runtime-9.0 aspnetcore-runtime-9.0
+          jellyfin-server navidrome sftpgo seanime
+          nginx apache2 postgresql mariadb redis sqlite
+          brainfuck zig nim crystal deno elixir tcc
+          gdbserver lldb hyperfine shfmt ruff tokei ctags indent
+          nasm yasm xxd
+          2048-c bastet vitetris nethack brogue angband nsnake
+          ninvaders pacman4console moon-buggy cavez-of-phear greed
+          tty-solitaire nudoku bsd-games robotfindskitten
+          cmatrix cbonsai pipes.sh nyancat hollywood no-more-secrets
+          cava tty-clock chafa catimg viu aview aalib figlet toilet
+          boxes cowsay fortune neofetch fastfetch onefetch wtfutil
+          cmus mpd ncmpcpp asciinema ttyper
           python-numpy python-scipy matplotlib python-pandas
           python-psutil python-ipykernel
           x11-repo termux-x11-nightly opencv-python
