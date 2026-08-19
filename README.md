@@ -5,7 +5,9 @@
 ![Shell: Bash](https://img.shields.io/badge/Shell-Bash-blue.svg)
 ![Version](https://img.shields.io/badge/Version-3.2-cyan.svg)
 ![No Root](https://img.shields.io/badge/Root-Not%20Required-brightgreen.svg)
-![Maintenance](https://img.shields.io/badge/maintenance-temporarily_paused-orange)
+![Maintenance Paused](https://img.shields.io/badge/Maintenance-Paused-yellow)
+
+> ⚠️ Maintenance on this repo is paused until March 2027. Issues and PRs may not be reviewed until then.
 <!--![Maintained](https://img.shields.io/badge/Maintained-Yes-success.svg) -->
 
 PocketDevTermux turns [Termux](https://termux.dev)  into a complete mobile development workstation.
