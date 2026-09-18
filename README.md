@@ -48,12 +48,13 @@ Run the script and pick one or more profiles. You can combine them freely.
 | 1 | Python | Python 3, pip, ipython, black, pylint, rich, requests, httpx, virtualenv |
 | 2 | Web | Node.js, live-server, eslint, prettier, nodemon, TypeScript, ts-node |
 | 3 | C / C++ | Clang, GCC, Make, CMake, GDB, binutils |
-| 4 | Java | OpenJDK 17, Gradle, Maven |
-| 5 | Kotlin | OpenJDK 17, Kotlin compiler |
+| 4 | Java | OpenJDK 21, Gradle, Maven |
+| 5 | Kotlin | OpenJDK 21, Kotlin compiler |
 | 6 | Rust | rustup, rustc, cargo |
 | 7 | DevOps / Shell | zsh, tmux, jq, shellcheck, ripgrep, fd, bat, lsd |
 | 8 | Go | Go toolchain, air (hot reload) |
-| 9 | Polyglot | All of the above |
+| 9 | Polyglot | All profiles, including C#/.NET |
+| 10 | C# / .NET | .NET 9 SDK, C# compiler, dotnet CLI |
 
 Multiple profiles can be selected at once:
 
@@ -97,6 +98,7 @@ newproject express  my-api
 newproject c        my-tool
 newproject rust     my-crate
 newproject go       my-service
+newproject csharp   my-console-app
 ```
 
 Run `newproject` with no arguments to see all available templates.

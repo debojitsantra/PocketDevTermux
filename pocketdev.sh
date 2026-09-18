@@ -4,7 +4,7 @@
 set -uo pipefail
 
 #colors and constants
-VERSION="3.2"
+VERSION="3.3"
 LOG_FILE="$HOME/pocketdev.log"
 STATE_FILE="$HOME/.pocketdev_state"
 PROJECTS_DIR="$HOME/projects"
@@ -325,10 +325,10 @@ show_profiles() {
   printf "       ${DIM}Clang, GCC, Make, CMake, GDB, valgrind, binutils${R}\n\n"
 
   printf "  ${CYAN}${BOLD}[ 4]${R}  ${WHITE}Java Developer${R}\n"
-  printf "       ${DIM}OpenJDK 17, Gradle, Maven${R}\n\n"
+  printf "       ${DIM}OpenJDK 21, Gradle, Maven${R}\n\n"
 
   printf "  ${CYAN}${BOLD}[ 5]${R}  ${WHITE}Kotlin Developer${R}\n"
-  printf "       ${DIM}OpenJDK 17, Kotlin compiler${R}\n\n"
+  printf "       ${DIM}OpenJDK 21, Kotlin compiler${R}\n\n"
 
   printf "  ${CYAN}${BOLD}[ 6]${R}  ${WHITE}Rust Developer${R}\n"
   printf "       ${DIM}rustup, rustc, cargo, rust-analyzer${R}\n\n"
@@ -340,7 +340,10 @@ show_profiles() {
   printf "       ${DIM}Go toolchain, gofmt, gopls, air (hot reload)${R}\n\n"
 
   printf "  ${CYAN}${BOLD}[ 9]${R}  ${WHITE}Polyglot (Everything)${R}\n"
-  printf "       ${DIM}All profiles above combined${R}\n\n"
+  printf "       ${DIM}All profiles, including C#/.NET${R}\n\n"
+
+  printf "  ${CYAN}${BOLD}[10]${R}  ${WHITE}C# / .NET Developer${R}\n"
+  printf "       ${DIM}.NET 9 SDK, C# compiler, dotnet CLI${R}\n\n"
 
   printf "  ${CYAN}${BOLD}[ 0]${R}  ${WHITE}Skip profiles${R}\n"
   printf "       ${DIM}Install only optional sections later in this run${R}\n\n"
@@ -570,7 +573,7 @@ EOF
 #profile: java
 install_java() {
   section "Java Developer"
-  install_pkgs "Java tools" openjdk-17 gradle
+  install_pkgs "Java 21 tools" openjdk-21 gradle
   pkg_install "maven" || warn "maven unavailable, use gradle"
 
   if [[ ! -d "$PROJECTS_DIR/java-starter" ]]; then
@@ -599,7 +602,7 @@ EOF
 #profile: kotlin
 install_kotlin() {
   section "Kotlin Developer"
-  install_pkgs "Kotlin tools" openjdk-17 kotlin
+  install_pkgs "Kotlin tools" openjdk-21 kotlin
 
   if [[ ! -d "$PROJECTS_DIR/kotlin-starter" ]]; then
     write_starter_file "$PROJECTS_DIR/kotlin-starter/main.kt" << 'EOF'
@@ -618,6 +621,43 @@ java -jar hello.jar
 ```
 EOF
     step "Kotlin starter project"; ok
+  fi
+}
+
+#profile: c#/.net
+install_dotnet() {
+  section "C# / .NET Developer"
+  install_pkgs ".NET 9 SDK" dotnet-sdk-9.0
+
+  if [[ ! -d "$PROJECTS_DIR/csharp-starter" ]]; then
+    write_starter_file "$PROJECTS_DIR/csharp-starter/csharp-starter.csproj" << 'EOF'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+</Project>
+EOF
+    write_starter_file "$PROJECTS_DIR/csharp-starter/Program.cs" << 'EOF'
+var name = args.Length > 0 ? args[0] : "World";
+Console.WriteLine($"Hello, {name}! Your C#/.NET environment is ready.");
+EOF
+    write_starter_file "$PROJECTS_DIR/csharp-starter/README.md" << 'EOF'
+# C# / .NET Starter
+
+Run:
+```
+dotnet run -- World
+```
+
+Build a release binary:
+```
+dotnet build -c Release
+```
+EOF
+    step "C# starter project"; ok
   fi
 }
 
@@ -775,8 +815,10 @@ install_polyglot() {
   install_c_cpp
   install_rust
   install_java
+  install_kotlin
   install_devops
   install_go
+  install_dotnet
 }
 
 install_jellyfin_server() {
@@ -1364,6 +1406,7 @@ usage() {
   printf "  ${CYAN}go${R}          Go module with main.go + go.mod\n"
   printf "  ${CYAN}bash${R}        Shell script project with main.sh + lib/\n"
   printf "  ${CYAN}java${R}        Java project with src/main/java structure\n"
+  printf "  ${CYAN}csharp${R}      C# console project for the .NET SDK\n"
   printf "  ${CYAN}datasci${R}     Data science project with notebooks/, data/, src/\n"
   echo ""
 }
@@ -1734,6 +1777,36 @@ java Main
 EOF
 }
 
+scaffold_csharp() {
+  local name="$1"
+  local dir="$PROJECTS_DIR/$name"
+  mkdir -p "$dir"
+  cat > "$dir/$name.csproj" << EOF
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+</Project>
+EOF
+  cat > "$dir/Program.cs" << EOF
+Console.WriteLine("Hello from $name!");
+EOF
+  cat > "$dir/.gitignore" << 'EOF'
+bin/
+obj/
+EOF
+  cat > "$dir/README.md" << EOF
+# $name (C# / .NET)
+
+\`\`\`
+dotnet run
+\`\`\`
+EOF
+}
+
 scaffold_datasci() {
   local name="$1" dir="$PROJECTS_DIR/$name"
   mkdir -p "$dir/notebooks" "$dir/data/raw" "$dir/data/processed" "$dir/src" "$dir/outputs"
@@ -1840,6 +1913,7 @@ case "$template" in
   go)      scaffold_go      "$proj_name" ;;
   bash)    scaffold_bash    "$proj_name" ;;
   java)    scaffold_java    "$proj_name" ;;
+  csharp|cs|dotnet) scaffold_csharp "$proj_name" ;;
   datasci) scaffold_datasci "$proj_name" ;;
   react)
     if command -v npx &>/dev/null; then
@@ -2129,6 +2203,29 @@ JAVAEOF
     tc "gradle" "gradle version"      "gradle --version"
   else
     ts "java (not installed)"
+  fi
+
+  section "C# / .NET"
+
+  if has_cmd dotnet; then
+    cat > "$TEST_DIR/Program.cs" << 'CSEOF'
+var numbers = new[] { 1, 2, 3, 4, 5 };
+if (numbers.Sum() != 15) throw new Exception("sum failed");
+Console.WriteLine("C#/.NET ok");
+CSEOF
+    cat > "$TEST_DIR/TestDotnet.csproj" << 'CSEOF'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+  </PropertyGroup>
+</Project>
+CSEOF
+    t  "dotnet build"         "dotnet build $TEST_DIR/TestDotnet.csproj --nologo"
+    t  "dotnet run"           "dotnet run --project $TEST_DIR/TestDotnet.csproj --no-build"
+    tc "dotnet" "dotnet version" "dotnet --version"
+  else
+    ts "dotnet (not installed)"
   fi
 
   
@@ -2454,6 +2551,7 @@ main() {
       7)  install_devops      ;;
       8)  install_go          ;;
       9)  install_polyglot    ;;
+      10) install_dotnet      ;;
       *)  printf "  ${YELLOW}Unknown profile %s -- skipped${R}\n" "$p" ;;
     esac
   done

@@ -65,7 +65,7 @@ remove_pkgs() {
     
     pkgs="python python-pip nodejs nodejs-lts
           clang binutils make cmake gdb
-          openjdk-17 gradle maven kotlin golang rust
+          openjdk-17 openjdk-21 gradle maven kotlin golang rust dotnet-sdk-9.0
           zsh tmux jq shellcheck ripgrep fd bat lsd
           fzf gh nnn micro helix neovim vim
           emacs
